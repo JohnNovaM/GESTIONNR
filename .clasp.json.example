@@ -1,0 +1,8 @@
+{
+  "scriptId": "PON_AQUI_EL_SCRIPT_ID",
+  "rootDir": "./src",
+  "filePushOrder": [
+    "backend/Main.gs",
+    "backend/Auth.gs"
+  ]
+}

@@ -1,0 +1,161 @@
+<style>
+  :root {
+    --color-primario: #1f4b99;
+    --color-primario-oscuro: #163a78;
+    --color-fondo: #f4f6f9;
+    --color-texto: #222;
+    --color-borde: #dbe1e8;
+    --color-error: #c0392b;
+    --radio: 8px;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    font-family: 'Segoe UI', Arial, sans-serif;
+    background: var(--color-fondo);
+    color: var(--color-texto);
+  }
+
+  /* ---- Login ---- */
+  .login-wrapper {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+  }
+
+  .login-card {
+    background: #fff;
+    border-radius: var(--radio);
+    box-shadow: 0 4px 24px rgba(0,0,0,0.08);
+    padding: 40px 36px;
+    width: 100%;
+    max-width: 380px;
+  }
+
+  .login-card h1 {
+    font-size: 20px;
+    margin: 0 0 24px;
+    text-align: center;
+    color: var(--color-primario-oscuro);
+  }
+
+  .campo {
+    margin-bottom: 16px;
+  }
+
+  .campo label {
+    display: block;
+    font-size: 13px;
+    margin-bottom: 6px;
+    color: #555;
+  }
+
+  .campo input {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid var(--color-borde);
+    border-radius: var(--radio);
+    font-size: 14px;
+  }
+
+  .campo input:focus {
+    outline: none;
+    border-color: var(--color-primario);
+  }
+
+  .btn-primario {
+    width: 100%;
+    padding: 11px;
+    background: var(--color-primario);
+    color: #fff;
+    border: none;
+    border-radius: var(--radio);
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  .btn-primario:hover { background: var(--color-primario-oscuro); }
+  .btn-primario:disabled { opacity: 0.6; cursor: default; }
+
+  .mensaje-error {
+    background: #fdecea;
+    color: var(--color-error);
+    padding: 10px 12px;
+    border-radius: var(--radio);
+    font-size: 13px;
+    margin-bottom: 16px;
+    display: none;
+  }
+
+  /* ---- App (post-login) ---- */
+  .app-shell { display: none; min-height: 100vh; }
+
+  .topbar {
+    background: #fff;
+    border-bottom: 1px solid var(--color-borde);
+    padding: 14px 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .topbar .usuario-info { font-size: 14px; }
+  .topbar .usuario-info strong { color: var(--color-primario-oscuro); }
+
+  .btn-secundario {
+    background: transparent;
+    border: 1px solid var(--color-borde);
+    padding: 7px 14px;
+    border-radius: var(--radio);
+    cursor: pointer;
+    font-size: 13px;
+  }
+
+  .contenido {
+    display: flex;
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 24px;
+    gap: 24px;
+  }
+
+  .menu-lateral {
+    width: 220px;
+    flex-shrink: 0;
+  }
+
+  .menu-lateral button {
+    display: block;
+    width: 100%;
+    text-align: left;
+    padding: 10px 14px;
+    margin-bottom: 6px;
+    background: #fff;
+    border: 1px solid var(--color-borde);
+    border-radius: var(--radio);
+    cursor: pointer;
+    font-size: 14px;
+  }
+
+  .menu-lateral button:hover { border-color: var(--color-primario); }
+
+  .panel-principal {
+    flex: 1;
+    background: #fff;
+    border: 1px solid var(--color-borde);
+    border-radius: var(--radio);
+    padding: 24px;
+    min-height: 300px;
+  }
+
+  /* ---- Responsive (celular) ---- */
+  @media (max-width: 720px) {
+    .contenido { flex-direction: column; padding: 16px; }
+    .menu-lateral { width: 100%; }
+  }
+</style>

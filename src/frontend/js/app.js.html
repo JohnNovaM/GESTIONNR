@@ -1,0 +1,96 @@
+<script>
+  // ---- Estado de sesión (vive solo mientras la pestaña está abierta) ----
+  function guardarSesion(datos) {
+    sessionStorage.setItem('sesion', JSON.stringify(datos));
+  }
+
+  function obtenerSesion() {
+    const raw = sessionStorage.getItem('sesion');
+    return raw ? JSON.parse(raw) : null;
+  }
+
+  function borrarSesion() {
+    sessionStorage.removeItem('sesion');
+  }
+
+  // ---- Login ----
+  document.getElementById('formLogin').addEventListener('submit', function (e) {
+    e.preventDefault();
+
+    const usuario = document.getElementById('usuario').value.trim();
+    const password = document.getElementById('password').value;
+    const btn = document.getElementById('btnLogin');
+    const mensajeError = document.getElementById('mensajeError');
+
+    mensajeError.style.display = 'none';
+    btn.disabled = true;
+    btn.textContent = 'Ingresando...';
+
+    google.script.run
+      .withSuccessHandler(function (respuesta) {
+        btn.disabled = false;
+        btn.textContent = 'Ingresar';
+
+        if (!respuesta.ok) {
+          mensajeError.textContent = respuesta.error;
+          mensajeError.style.display = 'block';
+          return;
+        }
+
+        guardarSesion(respuesta);
+        mostrarApp(respuesta);
+      })
+      .withFailureHandler(function (error) {
+        btn.disabled = false;
+        btn.textContent = 'Ingresar';
+        mensajeError.textContent = 'Error al conectar. Intenta de nuevo.';
+        mensajeError.style.display = 'block';
+        console.error(error);
+      })
+      .login(usuario, password);
+  });
+
+  // ---- Logout ----
+  document.getElementById('btnLogout').addEventListener('click', function () {
+    const sesion = obtenerSesion();
+    if (sesion && sesion.token) {
+      google.script.run.logout(sesion.token);
+    }
+    borrarSesion();
+    document.getElementById('appShell').style.display = 'none';
+    document.getElementById('loginWrapper').style.display = 'flex';
+    document.getElementById('formLogin').reset();
+  });
+
+  // ---- Render de la app tras login ----
+  function mostrarApp(sesion) {
+    document.getElementById('loginWrapper').style.display = 'none';
+    document.getElementById('appShell').style.display = 'block';
+
+    document.getElementById('nombreUsuario').textContent = sesion.nombre;
+    document.getElementById('rolUsuario').textContent = sesion.rol;
+
+    const menuLateral = document.getElementById('menuLateral');
+    menuLateral.innerHTML = '';
+    sesion.menu.forEach(function (item) {
+      const btn = document.createElement('button');
+      btn.textContent = item;
+      btn.addEventListener('click', function () {
+        document.getElementById('panelPrincipal').innerHTML =
+          '<p><strong>' + item + '</strong> — módulo en construcción.</p>';
+      });
+      menuLateral.appendChild(btn);
+    });
+
+    document.getElementById('panelPrincipal').innerHTML =
+      '<p>Selecciona un módulo del menú para comenzar.</p>';
+  }
+
+  // ---- Al cargar la página: si ya hay sesión activa, saltar el login ----
+  window.addEventListener('DOMContentLoaded', function () {
+    const sesion = obtenerSesion();
+    if (sesion) {
+      mostrarApp(sesion);
+    }
+  });
+</script>
