@@ -1,0 +1,8 @@
+{
+  "scriptId": "1berp55i5JwoSck81GiLXaX5JN1CP_IkRrdX7RW-ZZkBnGAOB5ZcNgsnx",
+  "rootDir": "./src",
+  "filePushOrder": [
+    "backend/Main.gs",
+    "backend/Auth.gs"
+  ]
+}

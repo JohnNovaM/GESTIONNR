@@ -103,6 +103,7 @@ function login(usuario, password) {
       return {
         ok: true,
         token: token,
+        usuario: sesion.usuario,
         nombre: sesion.nombre,
         rol: sesion.rol,
         menu: obtenerMenuPorRol(sesion.rol)
@@ -156,11 +157,14 @@ function requiereRol_(token, rolesPermitidos) {
  * a pantallas reales a medida que se construya cada módulo.
  */
 function obtenerMenuPorRol(rol) {
+  const menuAsesor = ['Cotizador', 'Ventas', 'Recepción', 'Minutos', 'Novedades', 'Desplazamientos', 'Pagos', 'Cuentas de Cobro'];
+  const menuAdminPropio = ['Usuarios', 'Catálogo', 'Matriz', 'Anuncios', 'Archivado', 'Reportes'];
+
   const menus = {
-    Asesor: ['Cotizador', 'Ventas', 'Recepción', 'Minutos', 'Novedades', 'Desplazamientos', 'Pagos', 'Cuentas de Cobro'],
-    Coordinador: ['Ventas (equipo)', 'Novedades (equipo)', 'Desplazamientos (equipo)', 'Reportes'],
-    Administrador: ['Usuarios', 'Catálogo y Kits', 'Matriz', 'Archivado', 'Reportes'],
-    Logistica: ['Descarga de Ventas']
+    Asesor: menuAsesor,
+    Coordinador: ['Ventas (equipo)', 'Novedades (equipo)', 'Desplazamientos (equipo)', 'Minutos', 'Reportes'],
+    Administrador: menuAsesor.concat(menuAdminPropio),
+    Logistica: ['Ventas', 'Descarga de Ventas']
   };
   return menus[rol] || [];
 }

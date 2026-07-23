@@ -9,7 +9,11 @@
   <!-- ===== LOGIN ===== -->
   <div class="login-wrapper" id="loginWrapper">
     <div class="login-card">
-      <h1>Gestión de Asesores</h1>
+      <?!= include('frontend/logo'); ?>
+      <h1>Natural Resvex</h1>
+      <p class="login-subtitulo">Área Comercial</p>
+      <p class="login-instruccion">Ingresa con tu usuario y contraseña</p>
+      <p class="login-version">v1</p>
 
       <div class="mensaje-error" id="mensajeError"></div>
 
@@ -33,11 +37,25 @@
       <div class="usuario-info">
         <strong id="nombreUsuario"></strong> — <span id="rolUsuario"></span>
       </div>
-      <button class="btn-secundario" id="btnLogout">Cerrar sesión</button>
+      <div class="topbar-acciones">
+        <button class="btn-secundario" id="btnActualizarGlobal">↻ Actualizar</button>
+        <select class="btn-secundario" id="selectAutoActualizar">
+          <option value="0">Manual</option>
+          <option value="30">Cada 30 seg</option>
+          <option value="60">Cada 1 min</option>
+          <option value="300">Cada 5 min</option>
+        </select>
+        <button class="btn-secundario" id="btnLogout">Cerrar sesión</button>
+      </div>
     </div>
 
+    <div class="banner-anuncios" id="bannerAnuncios"></div>
+
     <div class="contenido">
-      <div class="menu-lateral" id="menuLateral"></div>
+      <div class="menu-lateral-container">
+        <div class="menu-logo"><?!= include('frontend/logo'); ?></div>
+        <div class="menu-lateral" id="menuLateral"></div>
+      </div>
       <div class="panel-principal" id="panelPrincipal"></div>
     </div>
   </div>

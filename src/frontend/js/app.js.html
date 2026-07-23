@@ -1,5 +1,24 @@
 <script>
   // ---- Estado de sesión (vive solo mientras la pestaña está abierta) ----
+  let funcionRecargaActual = null; // cada módulo registra aquí cómo se recarga a sí mismo
+  let intervaloActualizacionId = null;
+
+  function ejecutarRecargaActual() {
+    if (typeof funcionRecargaActual === 'function') {
+      funcionRecargaActual();
+    }
+  }
+
+  function configurarAutoActualizacion(segundos) {
+    if (intervaloActualizacionId) {
+      clearInterval(intervaloActualizacionId);
+      intervaloActualizacionId = null;
+    }
+    if (segundos > 0) {
+      intervaloActualizacionId = setInterval(ejecutarRecargaActual, segundos * 1000);
+    }
+  }
+
   function guardarSesion(datos) {
     sessionStorage.setItem('sesion', JSON.stringify(datos));
   }
@@ -56,10 +75,18 @@
     if (sesion && sesion.token) {
       google.script.run.logout(sesion.token);
     }
+    configurarAutoActualizacion(0);
+    funcionRecargaActual = null;
     borrarSesion();
     document.getElementById('appShell').style.display = 'none';
     document.getElementById('loginWrapper').style.display = 'flex';
     document.getElementById('formLogin').reset();
+  });
+
+  // ---- Actualizar (global) ----
+  document.getElementById('btnActualizarGlobal').addEventListener('click', ejecutarRecargaActual);
+  document.getElementById('selectAutoActualizar').addEventListener('change', function (e) {
+    configurarAutoActualizacion(Number(e.target.value));
   });
 
   // ---- Render de la app tras login ----
@@ -76,14 +103,1901 @@
       const btn = document.createElement('button');
       btn.textContent = item;
       btn.addEventListener('click', function () {
-        document.getElementById('panelPrincipal').innerHTML =
-          '<p><strong>' + item + '</strong> — módulo en construcción.</p>';
+        renderModulo(item);
       });
       menuLateral.appendChild(btn);
     });
 
     document.getElementById('panelPrincipal').innerHTML =
       '<p>Selecciona un módulo del menú para comenzar.</p>';
+
+    cargarBannerAnuncios(sesion.token);
+  }
+
+  // ---- Banner de anuncios ----
+  function idsAnunciosDescartados_() {
+    const raw = sessionStorage.getItem('anunciosDescartados');
+    return raw ? JSON.parse(raw) : [];
+  }
+
+  function descartarAnuncio_(id) {
+    const ids = idsAnunciosDescartados_();
+    ids.push(String(id));
+    sessionStorage.setItem('anunciosDescartados', JSON.stringify(ids));
+  }
+
+  function cargarBannerAnuncios(token) {
+    google.script.run
+      .withSuccessHandler(function (anuncios) {
+        const banner = document.getElementById('bannerAnuncios');
+        if (!banner) return;
+        const descartados = idsAnunciosDescartados_();
+        const visibles = (anuncios || []).filter(function (a) { return descartados.indexOf(String(a.idAnuncio)) === -1; });
+
+        banner.innerHTML = visibles.map(function (a) {
+          return '<div class="anuncio" data-id="' + a.idAnuncio + '">' +
+            '<span>📢 ' + a.mensaje + '</span>' +
+            '<button data-id="' + a.idAnuncio + '" title="Descartar">✕</button>' +
+            '</div>';
+        }).join('');
+
+        banner.querySelectorAll('button[data-id]').forEach(function (btn) {
+          btn.addEventListener('click', function () {
+            descartarAnuncio_(btn.getAttribute('data-id'));
+            btn.closest('.anuncio').remove();
+          });
+        });
+      })
+      .withFailureHandler(function (e) { console.error(e); })
+      .listarAnunciosActivos(token);
+  }
+
+  // ---- Router simple de módulos ----
+  function renderModulo(item) {
+    const panel = document.getElementById('panelPrincipal');
+    funcionRecargaActual = null; // cada módulo registra la suya si aplica (formularios no)
+
+    if (item === 'Usuarios') {
+      renderUsuarios();
+      return;
+    }
+    if (item === 'Catálogo') {
+      renderCatalogo();
+      return;
+    }
+    if (item === 'Matriz') {
+      renderMatriz();
+      return;
+    }
+    if (item === 'Cotizador') {
+      renderCotizador();
+      return;
+    }
+    if (item === 'Ventas' || item === 'Ventas (equipo)') {
+      renderVentas();
+      return;
+    }
+    if (item === 'Anuncios') {
+      renderAnuncios();
+      return;
+    }
+    if (item === 'Recepción') {
+      renderRecepcion();
+      return;
+    }
+    if (item === 'Minutos') {
+      renderMinutos();
+      return;
+    }
+
+    panel.innerHTML = '<p><strong>' + item + '</strong> — módulo en construcción.</p>';
+  }
+
+  // ==================================================
+  // Módulo: Usuarios (solo Administrador)
+  // ==================================================
+  const ROLES_DISPONIBLES = ['Asesor', 'Coordinador', 'Administrador', 'Logistica'];
+
+  function renderUsuarios() {
+    const panel = document.getElementById('panelPrincipal');
+    const sesion = obtenerSesion();
+
+    panel.innerHTML =
+      '<h2 class="modulo-titulo">Usuarios</h2>' +
+      '<div id="mensajeUsuarios"></div>' +
+      '<form id="formUsuario" class="form-usuario">' +
+      '  <div class="campo">' +
+      '    <label for="nuevoNombre">Nombre</label>' +
+      '    <input type="text" id="nuevoNombre" required>' +
+      '  </div>' +
+      '  <div class="campo">' +
+      '    <label for="nuevoUsuario">Usuario</label>' +
+      '    <input type="text" id="nuevoUsuario" required>' +
+      '  </div>' +
+      '  <div class="campo">' +
+      '    <label for="nuevaPassword">Contraseña</label>' +
+      '    <input type="password" id="nuevaPassword" required minlength="4">' +
+      '  </div>' +
+      '  <div class="campo">' +
+      '    <label for="nuevoRol">Rol</label>' +
+      '    <select id="nuevoRol" required>' +
+      '      <option value="">Selecciona un rol</option>' +
+      ROLES_DISPONIBLES.map(function (r) { return '<option value="' + r + '">' + r + '</option>'; }).join('') +
+      '    </select>' +
+      '  </div>' +
+      '  <button type="submit" class="btn-primario" id="btnCrearUsuario">Crear usuario</button>' +
+      '</form>' +
+      '<table class="tabla-usuarios">' +
+      '  <thead><tr><th>Nombre</th><th>Usuario</th><th>Rol</th><th>Estado</th><th></th></tr></thead>' +
+      '  <tbody id="filasUsuarios"><tr><td colspan="5">Cargando...</td></tr></tbody>' +
+      '</table>';
+
+    document.getElementById('formUsuario').addEventListener('submit', function (e) {
+      e.preventDefault();
+      crearUsuarioDesdeFormulario(sesion.token);
+    });
+
+    cargarListaUsuarios(sesion.token);
+    funcionRecargaActual = function () { cargarListaUsuarios(sesion.token); };
+  }
+
+  function cargarListaUsuarios(token) {
+    google.script.run
+      .withSuccessHandler(function (usuarios) {
+        const tbody = document.getElementById('filasUsuarios');
+        if (!tbody) return; // el usuario pudo haber navegado a otro módulo mientras cargaba
+
+        if (!usuarios.length) {
+          tbody.innerHTML = '<tr><td colspan="5">No hay usuarios registrados aún.</td></tr>';
+          return;
+        }
+
+        tbody.innerHTML = usuarios.map(function (u) {
+          const badge = u.activo
+            ? '<span class="badge badge-activo">Activo</span>'
+            : '<span class="badge badge-inactivo">Inactivo</span>';
+          const accion = u.activo
+            ? '<button class="btn-link" data-id="' + u.idUsuario + '" data-accion="desactivar">Desactivar</button>'
+            : '<button class="btn-link" data-id="' + u.idUsuario + '" data-accion="activar">Activar</button>';
+
+          return '<tr>' +
+            '<td>' + u.nombre + '</td>' +
+            '<td>' + u.usuario + '</td>' +
+            '<td>' + u.rol + '</td>' +
+            '<td>' + badge + '</td>' +
+            '<td>' + accion + '</td>' +
+            '</tr>';
+        }).join('');
+
+        // engancha los botones activar/desactivar recién creados
+        tbody.querySelectorAll('button[data-accion]').forEach(function (btn) {
+          btn.addEventListener('click', function () {
+            const id = btn.getAttribute('data-id');
+            const nuevoEstado = btn.getAttribute('data-accion') === 'activar';
+            const sesion = obtenerSesion();
+            google.script.run
+              .withSuccessHandler(function () { cargarListaUsuarios(sesion.token); })
+              .withFailureHandler(function (err) { alert('Error: ' + err.message); })
+              .cambiarEstadoUsuario(sesion.token, id, nuevoEstado);
+          });
+        });
+      })
+      .withFailureHandler(function (error) {
+        const tbody = document.getElementById('filasUsuarios');
+        if (tbody) tbody.innerHTML = '<tr><td colspan="5">Error al cargar usuarios.</td></tr>';
+        console.error(error);
+      })
+      .listarUsuarios(token);
+  }
+
+  function crearUsuarioDesdeFormulario(token) {
+    const btn = document.getElementById('btnCrearUsuario');
+    const mensaje = document.getElementById('mensajeUsuarios');
+    mensaje.innerHTML = '';
+
+    const datos = {
+      nombre: document.getElementById('nuevoNombre').value.trim(),
+      usuario: document.getElementById('nuevoUsuario').value.trim(),
+      password: document.getElementById('nuevaPassword').value,
+      rol: document.getElementById('nuevoRol').value
+    };
+
+    btn.disabled = true;
+    btn.textContent = 'Creando...';
+
+    google.script.run
+      .withSuccessHandler(function () {
+        btn.disabled = false;
+        btn.textContent = 'Crear usuario';
+        mensaje.innerHTML = '<div class="mensaje-exito">Usuario creado correctamente.</div>';
+        document.getElementById('formUsuario').reset();
+        cargarListaUsuarios(token);
+      })
+      .withFailureHandler(function (error) {
+        btn.disabled = false;
+        btn.textContent = 'Crear usuario';
+        mensaje.innerHTML = '<div class="mensaje-error" style="display:block;">' + error.message + '</div>';
+      })
+      .crearUsuario(token, datos);
+  }
+
+  // ==================================================
+  // Módulo: Catálogo (lectura: todos — edición: solo Administrador)
+  // ==================================================
+  function formatoMoneda(numero) {
+    return '$ ' + Number(numero || 0).toLocaleString('es-CO');
+  }
+
+  function renderCatalogo() {
+    const panel = document.getElementById('panelPrincipal');
+    const sesion = obtenerSesion();
+    const esAdmin = sesion.rol === 'Administrador';
+
+    panel.innerHTML =
+      '<h2 class="modulo-titulo">Catálogo de Productos</h2>' +
+      '<div id="mensajeCatalogo"></div>' +
+      (esAdmin ?
+        '<form id="formArticulo" class="form-usuario">' +
+        '  <div class="campo">' +
+        '    <label for="nuevoNombreArticulo">Nombre del producto</label>' +
+        '    <input type="text" id="nuevoNombreArticulo" required>' +
+        '  </div>' +
+        '  <div class="campo">' +
+        '    <label for="nuevoPrecioArticulo">Precio unitario</label>' +
+        '    <input type="number" id="nuevoPrecioArticulo" min="0" step="100" required>' +
+        '  </div>' +
+        '  <button type="submit" class="btn-primario" id="btnCrearArticulo">Agregar producto</button>' +
+        '</form>' : '') +
+      '<table class="tabla-usuarios">' +
+      '  <thead><tr><th>Producto</th><th>Precio unitario</th><th>Estado</th>' + (esAdmin ? '<th></th>' : '') + '</tr></thead>' +
+      '  <tbody id="filasCatalogo"><tr><td colspan="4">Cargando...</td></tr></tbody>' +
+      '</table>';
+
+    if (esAdmin) {
+      document.getElementById('formArticulo').addEventListener('submit', function (e) {
+        e.preventDefault();
+        crearArticuloDesdeFormulario(sesion.token);
+      });
+    }
+
+    cargarListaCatalogo(sesion.token, esAdmin);
+    funcionRecargaActual = function () { cargarListaCatalogo(sesion.token, esAdmin); };
+  }
+
+  function cargarListaCatalogo(token, esAdmin) {
+    google.script.run
+      .withSuccessHandler(function (articulos) {
+        const tbody = document.getElementById('filasCatalogo');
+        if (!tbody) return;
+
+        if (!articulos.length) {
+          tbody.innerHTML = '<tr><td colspan="4">No hay productos registrados aún.</td></tr>';
+          return;
+        }
+
+        tbody.innerHTML = articulos.map(function (a) {
+          const badge = a.activo
+            ? '<span class="badge badge-activo">Activo</span>'
+            : '<span class="badge badge-inactivo">Inactivo</span>';
+
+          const celdaPrecio = esAdmin
+            ? '<input type="number" class="input-precio" data-id="' + a.idArticulo + '" value="' + a.precioUnitario + '" min="0" step="100" style="width:110px;"> ' +
+              '<button class="btn-link" data-id="' + a.idArticulo + '" data-accion="guardar-precio">Guardar</button>'
+            : formatoMoneda(a.precioUnitario);
+
+          const celdaAccion = esAdmin
+            ? (a.activo
+                ? '<button class="btn-link" data-id="' + a.idArticulo + '" data-accion="desactivar">Desactivar</button>'
+                : '<button class="btn-link" data-id="' + a.idArticulo + '" data-accion="activar">Activar</button>')
+            : '';
+
+          return '<tr>' +
+            '<td>' + a.nombre + '</td>' +
+            '<td>' + celdaPrecio + '</td>' +
+            '<td>' + badge + '</td>' +
+            (esAdmin ? '<td>' + celdaAccion + '</td>' : '') +
+            '</tr>';
+        }).join('');
+
+        if (esAdmin) {
+          tbody.querySelectorAll('button[data-accion="guardar-precio"]').forEach(function (btn) {
+            btn.addEventListener('click', function () {
+              const id = btn.getAttribute('data-id');
+              const input = tbody.querySelector('input[data-id="' + id + '"]');
+              const sesion = obtenerSesion();
+              google.script.run
+                .withSuccessHandler(function () { cargarListaCatalogo(sesion.token, true); })
+                .withFailureHandler(function (err) { alert('Error: ' + err.message); })
+                .actualizarPrecioArticulo(sesion.token, id, input.value);
+            });
+          });
+
+          tbody.querySelectorAll('button[data-accion="activar"], button[data-accion="desactivar"]').forEach(function (btn) {
+            btn.addEventListener('click', function () {
+              const id = btn.getAttribute('data-id');
+              const nuevoEstado = btn.getAttribute('data-accion') === 'activar';
+              const sesion = obtenerSesion();
+              google.script.run
+                .withSuccessHandler(function () { cargarListaCatalogo(sesion.token, true); })
+                .withFailureHandler(function (err) { alert('Error: ' + err.message); })
+                .cambiarEstadoArticulo(sesion.token, id, nuevoEstado);
+            });
+          });
+        }
+      })
+      .withFailureHandler(function (error) {
+        const tbody = document.getElementById('filasCatalogo');
+        if (tbody) tbody.innerHTML = '<tr><td colspan="4">Error al cargar el catálogo.</td></tr>';
+        console.error(error);
+      })
+      .listarCatalogo(token);
+  }
+
+  function crearArticuloDesdeFormulario(token) {
+    const btn = document.getElementById('btnCrearArticulo');
+    const mensaje = document.getElementById('mensajeCatalogo');
+    mensaje.innerHTML = '';
+
+    const datos = {
+      nombre: document.getElementById('nuevoNombreArticulo').value.trim(),
+      precioUnitario: document.getElementById('nuevoPrecioArticulo').value
+    };
+
+    btn.disabled = true;
+    btn.textContent = 'Agregando...';
+
+    google.script.run
+      .withSuccessHandler(function () {
+        btn.disabled = false;
+        btn.textContent = 'Agregar producto';
+        mensaje.innerHTML = '<div class="mensaje-exito">Producto agregado correctamente.</div>';
+        document.getElementById('formArticulo').reset();
+        cargarListaCatalogo(token, true);
+      })
+      .withFailureHandler(function (error) {
+        btn.disabled = false;
+        btn.textContent = 'Agregar producto';
+        mensaje.innerHTML = '<div class="mensaje-error" style="display:block;">' + error.message + '</div>';
+      })
+      .crearArticulo(token, datos);
+  }
+
+  // ==================================================
+  // Módulo: Matriz (lectura: todos — edición: solo Administrador)
+  // ==================================================
+  const TRANSPORTADORAS_DISTRIBUIDOR_UI = ['Distribuidor', 'Servientrega', 'Coordinadora', 'TCC', 'Interrapidísimo'];
+  const TIPOS_ENTREGA_EN_UI = ['Domicilio', 'Oficina', 'Domicilio y Oficina'];
+  const LIMITE_FILAS_MOSTRADAS = 300; // la Matriz puede tener miles de filas — no se pinta todo de una vez
+  let matrizCompleta = []; // cache en memoria para filtrar sin volver a pedir al servidor
+
+  function formatoPorcentaje(numero) {
+    return (Number(numero || 0) * 100).toLocaleString('es-CO', { maximumFractionDigits: 2 }) + '%';
+  }
+
+  function renderMatriz() {
+    const panel = document.getElementById('panelPrincipal');
+    const sesion = obtenerSesion();
+    const esAdmin = sesion.rol === 'Administrador';
+
+    panel.innerHTML =
+      '<h2 class="modulo-titulo">Matriz de Cobertura</h2>' +
+      '<div id="mensajeMatriz"></div>' +
+      (esAdmin ?
+        '<form id="formCobertura" class="form-usuario">' +
+        '  <div class="campo">' +
+        '    <label for="nuevaTransportadora">Transportadora / Distribuidor</label>' +
+        '    <select id="nuevaTransportadora" required>' +
+        '      <option value="">Selecciona</option>' +
+        TRANSPORTADORAS_DISTRIBUIDOR_UI.map(function (t) { return '<option value="' + t + '">' + t + '</option>'; }).join('') +
+        '    </select>' +
+        '  </div>' +
+        '  <div class="campo">' +
+        '    <label for="nuevoDepartamento">Departamento</label>' +
+        '    <input type="text" id="nuevoDepartamento" required>' +
+        '  </div>' +
+        '  <div class="campo">' +
+        '    <label for="nuevaCiudad">Ciudad</label>' +
+        '    <input type="text" id="nuevaCiudad" required>' +
+        '  </div>' +
+        '  <div class="campo">' +
+        '    <label for="nuevaFrecuencia">Frecuencia de despacho</label>' +
+        '    <input type="text" id="nuevaFrecuencia" placeholder="Ej. Lun, Mar, Mie, Jue, Vie">' +
+        '  </div>' +
+        '  <div class="campo">' +
+        '    <label for="nuevoTrayecto">Tipo de trayecto (opcional)</label>' +
+        '    <input type="text" id="nuevoTrayecto" placeholder="Ej. Nacional">' +
+        '  </div>' +
+        '  <div class="campo">' +
+        '    <label for="nuevoTipoEntrega">Entrega en</label>' +
+        '    <select id="nuevoTipoEntrega" required>' +
+        '      <option value="">Selecciona</option>' +
+        TIPOS_ENTREGA_EN_UI.map(function (t) { return '<option value="' + t + '">' + t + '</option>'; }).join('') +
+        '    </select>' +
+        '  </div>' +
+        '  <div class="campo">' +
+        '    <label for="nuevoTiempo">Tiempo de entrega (días)</label>' +
+        '    <input type="number" id="nuevoTiempo" min="0" required>' +
+        '  </div>' +
+        '  <div class="campo">' +
+        '    <label for="nuevoFlete">Flete</label>' +
+        '    <input type="number" id="nuevoFlete" min="0" step="100" required>' +
+        '  </div>' +
+        '  <div class="campo">' +
+        '    <label for="nuevoSobreflete">Sobreflete (ej. 0.035 = 3.5%)</label>' +
+        '    <input type="number" id="nuevoSobreflete" min="0" step="0.001" required>' +
+        '  </div>' +
+        '  <div class="campo campo-full">' +
+        '    <label for="nuevaRestriccion">Restricción (opcional)</label>' +
+        '    <input type="text" id="nuevaRestriccion" placeholder="Ej. No vereda">' +
+        '  </div>' +
+        '  <button type="submit" class="btn-primario" id="btnCrearCobertura">Agregar cobertura</button>' +
+        '</form>' : '') +
+      '<div class="campo" style="max-width:320px;">' +
+      '  <label for="buscarMatriz">Buscar por ciudad o departamento</label>' +
+      '  <input type="text" id="buscarMatriz" placeholder="Ej. Medellín" autocomplete="off">' +
+      '</div>' +
+      '<div id="infoMatriz" style="color:#667;font-size:13px;margin-bottom:10px;">Cargando...</div>' +
+      '<table class="tabla-usuarios">' +
+      '  <thead><tr><th>Transportadora/Distribuidor</th><th>Departamento</th><th>Ciudad</th><th>Frecuencia</th><th>Entrega en</th><th>Días</th><th>Flete</th><th>Sobreflete</th><th>Estado</th>' + (esAdmin ? '<th></th>' : '') + '</tr></thead>' +
+      '  <tbody id="filasMatriz"></tbody>' +
+      '</table>';
+
+    if (esAdmin) {
+      document.getElementById('formCobertura').addEventListener('submit', function (e) {
+        e.preventDefault();
+        crearCoberturaDesdeFormulario(sesion.token);
+      });
+    }
+
+    document.getElementById('buscarMatriz').addEventListener('input', function (e) {
+      pintarFilasMatriz(e.target.value, esAdmin);
+    });
+
+    cargarListaMatriz(sesion.token, esAdmin);
+    funcionRecargaActual = function () { cargarListaMatrizYRepetirBusqueda_(sesion.token, esAdmin); };
+  }
+
+  function cargarListaMatriz(token, esAdmin) {
+    google.script.run
+      .withSuccessHandler(function (filas) {
+        matrizCompleta = filas;
+        pintarFilasMatriz('', esAdmin);
+      })
+      .withFailureHandler(function (error) {
+        const info = document.getElementById('infoMatriz');
+        if (info) info.textContent = 'Error al cargar la matriz.';
+        console.error(error);
+      })
+      .listarMatriz(token);
+  }
+
+  function pintarFilasMatriz(texto, esAdmin) {
+    const tbody = document.getElementById('filasMatriz');
+    const info = document.getElementById('infoMatriz');
+    if (!tbody || !info) return;
+
+    const t = texto.trim().toLowerCase();
+
+    if (!t) {
+      tbody.innerHTML = '';
+      info.textContent = matrizCompleta.length + ' coberturas cargadas en total. Escribe una ciudad o departamento arriba para buscar.';
+      return;
+    }
+
+    const filtradas = matrizCompleta.filter(function (f) {
+      return f.ciudad.toLowerCase().indexOf(t) !== -1 || f.departamento.toLowerCase().indexOf(t) !== -1;
+    });
+
+    if (!filtradas.length) {
+      tbody.innerHTML = '';
+      info.textContent = 'No hay coberturas para "' + texto + '".';
+      return;
+    }
+
+    const aMostrar = filtradas.slice(0, LIMITE_FILAS_MOSTRADAS);
+    info.textContent = filtradas.length > LIMITE_FILAS_MOSTRADAS
+      ? ('Mostrando ' + LIMITE_FILAS_MOSTRADAS + ' de ' + filtradas.length + ' resultados — afina la búsqueda para ver el resto.')
+      : (filtradas.length + ' resultado(s) para "' + texto + '".');
+
+    tbody.innerHTML = aMostrar.map(function (f) {
+      const badge = f.activo
+        ? '<span class="badge badge-activo">Activa</span>'
+        : '<span class="badge badge-inactivo">Inactiva</span>';
+
+      if (!esAdmin) {
+        return '<tr>' +
+          '<td>' + f.transportadoraDistribuidor + '</td>' +
+          '<td>' + f.departamento + '</td>' +
+          '<td>' + f.ciudad + '</td>' +
+          '<td>' + (f.frecuenciaEntrega || '') + '</td>' +
+          '<td>' + f.entregaEn + (f.restriccion ? ' <em>(' + f.restriccion + ')</em>' : '') + '</td>' +
+          '<td>' + f.tiempoEntrega + '</td>' +
+          '<td>' + formatoMoneda(f.flete) + '</td>' +
+          '<td>' + formatoPorcentaje(f.sobreflete) + '</td>' +
+          '<td>' + badge + '</td>' +
+          '</tr>';
+      }
+
+      const accion = f.activo
+        ? '<button class="btn-link" data-id="' + f.idMatriz + '" data-accion="desactivar">Desactivar</button>'
+        : '<button class="btn-link" data-id="' + f.idMatriz + '" data-accion="activar">Activar</button>';
+
+      return '<tr>' +
+        '<td>' + f.transportadoraDistribuidor + '</td>' +
+        '<td>' + f.departamento + '</td>' +
+        '<td>' + f.ciudad + '</td>' +
+        '<td><input type="text" class="input-frecuencia" data-id="' + f.idMatriz + '" value="' + (f.frecuenciaEntrega || '') + '" style="width:120px;"></td>' +
+        '<td><select class="input-entrega-en" data-id="' + f.idMatriz + '">' +
+        TIPOS_ENTREGA_EN_UI.map(function (op) {
+          return '<option value="' + op + '"' + (op === f.entregaEn ? ' selected' : '') + '>' + op + '</option>';
+        }).join('') + '</select></td>' +
+        '<td><input type="number" class="input-tiempo" data-id="' + f.idMatriz + '" value="' + f.tiempoEntrega + '" min="0" style="width:55px;"></td>' +
+        '<td><input type="number" class="input-flete" data-id="' + f.idMatriz + '" value="' + f.flete + '" min="0" step="100" style="width:90px;"></td>' +
+        '<td><input type="number" class="input-sobreflete" data-id="' + f.idMatriz + '" value="' + f.sobreflete + '" min="0" step="0.001" style="width:70px;"></td>' +
+        '<td>' + badge + '</td>' +
+        '<td>' +
+        '  <button class="btn-link" data-id="' + f.idMatriz + '" data-accion="guardar">Guardar</button>' +
+        '  ' + accion +
+        '</td>' +
+        '</tr>';
+    }).join('');
+
+    if (esAdmin) {
+      tbody.querySelectorAll('button[data-accion="guardar"]').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          const id = btn.getAttribute('data-id');
+          const frecuencia = tbody.querySelector('.input-frecuencia[data-id="' + id + '"]').value;
+          const entregaEn = tbody.querySelector('.input-entrega-en[data-id="' + id + '"]').value;
+          const tiempo = tbody.querySelector('.input-tiempo[data-id="' + id + '"]').value;
+          const flete = tbody.querySelector('.input-flete[data-id="' + id + '"]').value;
+          const sobreflete = tbody.querySelector('.input-sobreflete[data-id="' + id + '"]').value;
+          const sesion = obtenerSesion();
+          google.script.run
+            .withSuccessHandler(function () { cargarListaMatrizYRepetirBusqueda_(sesion.token, true); })
+            .withFailureHandler(function (err) { alert('Error: ' + err.message); })
+            .actualizarCobertura(sesion.token, id, {
+              frecuenciaEntrega: frecuencia, entregaEn: entregaEn, tiempoEntrega: tiempo,
+              flete: flete, sobreflete: sobreflete
+            });
+        });
+      });
+
+      tbody.querySelectorAll('button[data-accion="activar"], button[data-accion="desactivar"]').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          const id = btn.getAttribute('data-id');
+          const nuevoEstado = btn.getAttribute('data-accion') === 'activar';
+          const sesion = obtenerSesion();
+          google.script.run
+            .withSuccessHandler(function () { cargarListaMatrizYRepetirBusqueda_(sesion.token, true); })
+            .withFailureHandler(function (err) { alert('Error: ' + err.message); })
+            .cambiarEstadoCobertura(sesion.token, id, nuevoEstado);
+        });
+      });
+    }
+  }
+
+  function cargarListaMatrizYRepetirBusqueda_(token, esAdmin) {
+    const textoActual = document.getElementById('buscarMatriz') ? document.getElementById('buscarMatriz').value : '';
+    google.script.run
+      .withSuccessHandler(function (filas) {
+        matrizCompleta = filas;
+        pintarFilasMatriz(textoActual, esAdmin);
+      })
+      .withFailureHandler(function (error) { console.error(error); })
+      .listarMatriz(token);
+  }
+
+  function crearCoberturaDesdeFormulario(token) {
+    const btn = document.getElementById('btnCrearCobertura');
+    const mensaje = document.getElementById('mensajeMatriz');
+    mensaje.innerHTML = '';
+
+    const datos = {
+      transportadoraDistribuidor: document.getElementById('nuevaTransportadora').value,
+      departamento: document.getElementById('nuevoDepartamento').value.trim(),
+      ciudad: document.getElementById('nuevaCiudad').value.trim(),
+      frecuenciaEntrega: document.getElementById('nuevaFrecuencia').value.trim(),
+      tipoTrayecto: document.getElementById('nuevoTrayecto').value.trim(),
+      entregaEn: document.getElementById('nuevoTipoEntrega').value,
+      tiempoEntrega: document.getElementById('nuevoTiempo').value,
+      flete: document.getElementById('nuevoFlete').value,
+      sobreflete: document.getElementById('nuevoSobreflete').value,
+      restriccion: document.getElementById('nuevaRestriccion').value.trim()
+    };
+
+    btn.disabled = true;
+    btn.textContent = 'Agregando...';
+
+    google.script.run
+      .withSuccessHandler(function () {
+        btn.disabled = false;
+        btn.textContent = 'Agregar cobertura';
+        mensaje.innerHTML = '<div class="mensaje-exito">Cobertura agregada correctamente.</div>';
+        document.getElementById('formCobertura').reset();
+        cargarListaMatriz(token, true);
+      })
+      .withFailureHandler(function (error) {
+        btn.disabled = false;
+        btn.textContent = 'Agregar cobertura';
+        mensaje.innerHTML = '<div class="mensaje-error" style="display:block;">' + error.message + '</div>';
+      })
+      .crearCobertura(token, datos);
+  }
+
+
+  // ==================================================
+  // Módulo: Cotizador (disponible para cualquier rol autenticado)
+  // ==================================================
+  let cotizadorEstado = { departamento: '', ciudad: '', items: [], valorSugerido: 0, valorReal: 0 };
+
+  function renderCotizador() {
+    const panel = document.getElementById('panelPrincipal');
+    const sesion = obtenerSesion();
+    cotizadorEstado = { departamento: '', ciudad: '', items: [], valorSugerido: 0, valorReal: 0 };
+
+    panel.innerHTML =
+      '<h2 class="modulo-titulo">Cotizador de Envío</h2>' +
+      '<div id="mensajeCotizador"></div>' +
+      '<div class="form-usuario">' +
+      '  <div class="campo">' +
+      '    <label for="cotDepartamento">Departamento</label>' +
+      '    <select id="cotDepartamento"><option value="">Cargando...</option></select>' +
+      '  </div>' +
+      '  <div class="campo">' +
+      '    <label for="cotCiudad">Ciudad</label>' +
+      '    <select id="cotCiudad"><option value="">Selecciona un departamento primero</option></select>' +
+      '  </div>' +
+      '</div>' +
+      '<h3 style="margin-top:24px;font-size:15px;">Productos</h3>' +
+      '<div id="cotProductos">Cargando catálogo...</div>' +
+      '<div style="margin-top:16px;display:flex;align-items:center;gap:16px;flex-wrap:wrap;">' +
+      '  <div><strong>Valor sugerido:</strong> <span id="cotValorSugerido">$ 0</span></div>' +
+      '  <button type="button" class="btn-link" id="btnUsarSugerido">Usar este valor</button>' +
+      '</div>' +
+      '<div class="campo" style="max-width:240px;margin-top:10px;">' +
+      '  <label for="cotValorReal">Valor de la venta</label>' +
+      '  <input type="number" id="cotValorReal" min="0" step="1000">' +
+      '</div>' +
+      '<button type="button" class="btn-primario" id="btnCotizar" style="margin-top:10px;">Cotizar</button>' +
+      '<div id="cotOpciones" style="margin-top:24px;"></div>';
+
+    document.getElementById('btnUsarSugerido').addEventListener('click', function () {
+      document.getElementById('cotValorReal').value = cotizadorEstado.valorSugerido;
+    });
+    document.getElementById('btnCotizar').addEventListener('click', function () {
+      ejecutarCotizacion(sesion.token);
+    });
+
+    cargarDepartamentosCotizador(sesion.token);
+    cargarProductosCotizador(sesion.token);
+  }
+
+  function cargarDepartamentosCotizador(token) {
+    google.script.run
+      .withSuccessHandler(function (deptos) {
+        const select = document.getElementById('cotDepartamento');
+        if (!select) return;
+        select.innerHTML = '<option value="">Selecciona</option>' +
+          deptos.map(function (d) { return '<option value="' + d + '">' + d + '</option>'; }).join('');
+        select.addEventListener('change', function () {
+          cargarCiudadesCotizador(token, select.value);
+        });
+      })
+      .withFailureHandler(function (e) { console.error(e); })
+      .listarDepartamentos(token);
+  }
+
+  function cargarCiudadesCotizador(token, departamento) {
+    const select = document.getElementById('cotCiudad');
+    if (!select) return;
+    select.innerHTML = '<option value="">Cargando...</option>';
+    google.script.run
+      .withSuccessHandler(function (ciudades) {
+        if (!select) return;
+        select.innerHTML = '<option value="">Selecciona</option>' +
+          ciudades.map(function (c) { return '<option value="' + c + '">' + c + '</option>'; }).join('');
+      })
+      .withFailureHandler(function (e) { console.error(e); })
+      .listarCiudadesPorDepartamento(token, departamento);
+  }
+
+  function cargarProductosCotizador(token) {
+    google.script.run
+      .withSuccessHandler(function (articulos) {
+        const cont = document.getElementById('cotProductos');
+        if (!cont) return;
+        const activos = articulos.filter(function (a) { return a.activo; });
+
+        cont.innerHTML = activos.map(function (a) {
+          return '<div style="display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid var(--color-borde);">' +
+            '<div style="flex:1;">' + a.nombre + ' <span style="color:#889;">(' + formatoMoneda(a.precioUnitario) + ')</span></div>' +
+            '<input type="number" class="cot-cantidad" data-nombre="' + a.nombre + '" data-precio="' + a.precioUnitario + '" min="0" placeholder="0" style="width:70px;">' +
+            '</div>';
+        }).join('');
+
+        cont.querySelectorAll('.cot-cantidad').forEach(function (input) {
+          input.addEventListener('input', recalcularValorSugerido);
+        });
+      })
+      .withFailureHandler(function (e) { console.error(e); })
+      .listarCatalogo(token);
+  }
+
+  function recalcularValorSugerido() {
+    const inputs = document.querySelectorAll('.cot-cantidad');
+    let total = 0;
+    const items = [];
+    inputs.forEach(function (input) {
+      const cantidad = Number(input.value) || 0;
+      if (cantidad > 0) {
+        const precio = Number(input.getAttribute('data-precio')) || 0;
+        total += precio * cantidad;
+        items.push({ nombre: input.getAttribute('data-nombre'), cantidad: cantidad });
+      }
+    });
+    cotizadorEstado.items = items;
+    cotizadorEstado.valorSugerido = total;
+    const span = document.getElementById('cotValorSugerido');
+    if (span) span.textContent = formatoMoneda(total);
+  }
+
+  function ejecutarCotizacion(token) {
+    const departamento = document.getElementById('cotDepartamento').value;
+    const ciudad = document.getElementById('cotCiudad').value;
+    const valorReal = document.getElementById('cotValorReal').value;
+    const mensaje = document.getElementById('mensajeCotizador');
+    mensaje.innerHTML = '';
+
+    if (!departamento || !ciudad) {
+      mensaje.innerHTML = '<div class="mensaje-error" style="display:block;">Selecciona departamento y ciudad.</div>';
+      return;
+    }
+    if (!cotizadorEstado.items.length) {
+      mensaje.innerHTML = '<div class="mensaje-error" style="display:block;">Selecciona al menos un producto.</div>';
+      return;
+    }
+    if (!valorReal || Number(valorReal) <= 0) {
+      mensaje.innerHTML = '<div class="mensaje-error" style="display:block;">Ingresa el valor de la venta.</div>';
+      return;
+    }
+
+    cotizadorEstado.departamento = departamento;
+    cotizadorEstado.ciudad = ciudad;
+    cotizadorEstado.valorReal = Number(valorReal);
+
+    const cont = document.getElementById('cotOpciones');
+    cont.innerHTML = 'Buscando opciones de envío...';
+
+    google.script.run
+      .withSuccessHandler(function (opciones) {
+        if (!cont) return;
+        if (!opciones.length) {
+          cont.innerHTML = '<p>No hay cobertura registrada para ' + ciudad + ', ' + departamento + '.</p>';
+          return;
+        }
+        window.__opcionesCotizador = opciones;
+
+        cont.innerHTML = '<h3 style="font-size:15px;">Opciones de envío</h3>' + opciones.map(function (o, i) {
+          return '<button type="button" class="opcion-envio" data-idx="' + i + '" ' +
+            'style="display:block;width:100%;text-align:left;padding:14px 16px;margin-bottom:10px;background:#fff;border:1px solid var(--color-borde);border-radius:var(--radio);cursor:pointer;">' +
+            '<strong>' + o.transportadoraDistribuidor + '</strong> — ' + o.tiempoEntrega + ' día(s) — ' + o.entregaEn +
+            (o.restriccion ? ' <em>(' + o.restriccion + ')</em>' : '') + '<br>' +
+            '<span style="color:#667;">Despacha: ' + (o.frecuenciaEntrega || 'N/D') + '</span><br>' +
+            '<span style="font-weight:600;">Valor envío: ' + formatoMoneda(o.valorEnvio) + '</span>' +
+            '</button>';
+        }).join('');
+
+        cont.querySelectorAll('.opcion-envio').forEach(function (btn) {
+          btn.addEventListener('click', function () {
+            const idx = Number(btn.getAttribute('data-idx'));
+            renderFormularioVenta(window.__opcionesCotizador[idx]);
+          });
+        });
+      })
+      .withFailureHandler(function (error) {
+        cont.innerHTML = '<p>Error al cotizar.</p>';
+        console.error(error);
+      })
+      .cotizarEnvio(token, departamento, ciudad, valorReal);
+  }
+
+  // ---- Formulario de venta (aparece al elegir una opción de envío) ----
+  function renderFormularioVenta(opcion) {
+    const panel = document.getElementById('panelPrincipal');
+    const sesion = obtenerSesion();
+    const esDistribuidor = opcion.transportadoraDistribuidor === 'Distribuidor';
+
+    panel.innerHTML =
+      '<h2 class="modulo-titulo">Confirmar venta — ' + opcion.transportadoraDistribuidor + '</h2>' +
+      '<div id="mensajeVenta"></div>' +
+      '<div style="background:var(--color-fondo);border:1px solid var(--color-borde);border-radius:var(--radio);padding:14px;margin-bottom:20px;font-size:14px;">' +
+      '  <div><strong>Destino:</strong> ' + cotizadorEstado.ciudad + ', ' + cotizadorEstado.departamento + '</div>' +
+      '  <div><strong>Kit:</strong> ' + cotizadorEstado.items.map(function (i) { return i.cantidad + 'x ' + i.nombre; }).join(' + ') + '</div>' +
+      '  <div><strong>Valor venta:</strong> ' + formatoMoneda(cotizadorEstado.valorReal) + '</div>' +
+      '  <div><strong>Envío:</strong> ' + opcion.tiempoEntrega + ' día(s), ' + opcion.entregaEn + ' — ' + formatoMoneda(opcion.valorEnvio) + '</div>' +
+      '</div>' +
+      '<form id="formVenta" class="form-usuario">' +
+      '  <div class="campo"><label for="ventaCedula">Cédula</label><input type="text" id="ventaCedula" required></div>' +
+      '  <div class="campo-full" id="clienteEncontradoInfo"></div>' +
+      '  <div class="campo"><label for="ventaNombre">Nombre</label><input type="text" id="ventaNombre" required></div>' +
+      '  <div class="campo"><label for="ventaDireccion">Dirección</label><input type="text" id="ventaDireccion" required></div>' +
+      '  <div class="campo"><label for="ventaCelular">Celular</label><input type="text" id="ventaCelular" required></div>' +
+      '  <div class="campo"><label for="ventaTelefono">Teléfono</label><input type="text" id="ventaTelefono"></div>' +
+      '  <div class="campo"><label for="ventaCorreo">Correo electrónico</label><input type="email" id="ventaCorreo"></div>' +
+      '  <div class="campo campo-full"><label for="ventaObservacion">Observación</label><input type="text" id="ventaObservacion"></div>' +
+      '  <div class="campo"><label for="ventaComision">Comisión (%)</label><input type="number" id="ventaComision" value="11" min="0" step="0.1"></div>' +
+      '  <div class="campo campo-full">' +
+      '    <label for="ventaFormaPago">Forma de pago</label>' +
+      '    <select id="ventaFormaPago">' +
+      '      <option value="contraentrega">Contra entrega</option>' +
+      '      <option value="consignacion">Consignación (queda pendiente de aprobación)</option>' +
+      '    </select>' +
+      '  </div>' +
+      '  <button type="submit" class="btn-primario" id="btnGuardarVenta">Guardar venta</button>' +
+      '</form>' +
+      '<button type="button" class="btn-link" id="btnVolverCotizador" style="margin-top:10px;">← Volver al Cotizador</button>';
+
+    document.getElementById('btnVolverCotizador').addEventListener('click', renderCotizador);
+
+    document.getElementById('ventaCedula').addEventListener('blur', function () {
+      buscarClienteExistente(sesion.token, this.value.trim());
+    });
+
+    document.getElementById('formVenta').addEventListener('submit', function (e) {
+      e.preventDefault();
+      guardarVenta(sesion.token, opcion, esDistribuidor);
+    });
+  }
+
+  // ---- Búsqueda de cliente existente por cédula (evita retipear datos) ----
+  function buscarClienteExistente(token, cedula) {
+    const cont = document.getElementById('clienteEncontradoInfo');
+    if (!cont) return;
+    if (!cedula) { cont.innerHTML = ''; return; }
+
+    google.script.run
+      .withSuccessHandler(function (cliente) {
+        if (!cont) return; // el usuario pudo haber navegado a otra pantalla mientras buscaba
+
+        if (!cliente) {
+          cont.innerHTML = '';
+          return;
+        }
+
+        const fecha = cliente.fecha ? new Date(cliente.fecha).toLocaleDateString('es-CO') : '';
+        const sesion = obtenerSesion();
+
+        let opcionesAsesor = '';
+        if (cliente.asesor && cliente.asesor !== sesion.usuario) {
+          opcionesAsesor =
+            '<div class="campo" style="margin-top:8px;max-width:320px;">' +
+            '  <label for="ventaAsesorAsignado">¿A nombre de qué asesor queda esta venta?</label>' +
+            '  <select id="ventaAsesorAsignado">' +
+            '    <option value="' + sesion.usuario + '">Dejarla a mi nombre (' + sesion.usuario + ')</option>' +
+            '    <option value="' + cliente.asesor + '">Asignar al asesor de este cliente (' + cliente.asesor + ')</option>' +
+            '  </select>' +
+            '</div>';
+        }
+
+        cont.innerHTML =
+          '<div class="mensaje-exito" style="background:#e3edf9;color:#1e4f7d;">' +
+          'Cliente encontrado: <strong>' + (cliente.nombre || '') + '</strong> — última compra ' + fecha +
+          (cliente.asesor ? ' — Asesor asignado: <strong>' + cliente.asesor + '</strong>' : '') +
+          '<br><button type="button" class="btn-link" id="btnUsarDatosCliente">Usar estos datos</button>' +
+          '</div>' + opcionesAsesor;
+
+        document.getElementById('btnUsarDatosCliente').addEventListener('click', function () {
+          document.getElementById('ventaNombre').value = cliente.nombre || '';
+          document.getElementById('ventaDireccion').value = cliente.direccion || '';
+          document.getElementById('ventaCelular').value = cliente.celular || '';
+          document.getElementById('ventaTelefono').value = cliente.telefono || '';
+          document.getElementById('ventaCorreo').value = cliente.correoElectronico || '';
+        });
+      })
+      .withFailureHandler(function (e) { console.error(e); })
+      .buscarClientePorCedula(token, cedula);
+  }
+
+  function guardarVenta(token, opcion, esDistribuidor) {
+    const btn = document.getElementById('btnGuardarVenta');
+    const mensaje = document.getElementById('mensajeVenta');
+    mensaje.innerHTML = '';
+
+    const selectAsesor = document.getElementById('ventaAsesorAsignado');
+
+    const datos = {
+      cedula: document.getElementById('ventaCedula').value.trim(),
+      nombre: document.getElementById('ventaNombre').value.trim(),
+      direccion: document.getElementById('ventaDireccion').value.trim(),
+      celular: document.getElementById('ventaCelular').value.trim(),
+      telefono: document.getElementById('ventaTelefono').value.trim(),
+      correoElectronico: document.getElementById('ventaCorreo').value.trim(),
+      observacion: document.getElementById('ventaObservacion').value.trim(),
+      comisionPorcentaje: Number(document.getElementById('ventaComision').value) / 100,
+      asesorAsignado: selectAsesor ? selectAsesor.value : null,
+      valorSugerido: cotizadorEstado.valorSugerido,
+      valorReal: cotizadorEstado.valorReal,
+      items: cotizadorEstado.items,
+      idKit: 'personalizado',
+      ciudad: cotizadorEstado.ciudad
+    };
+
+    btn.disabled = true;
+    btn.textContent = 'Guardando...';
+
+    const onSuccess = function (resultado) {
+      btn.disabled = false;
+      btn.textContent = 'Guardar venta';
+      mensaje.innerHTML = '<div class="mensaje-exito">Venta #' + resultado.idVenta + ' guardada correctamente.</div>';
+      document.getElementById('formVenta').reset();
+    };
+    const onFailure = function (error) {
+      btn.disabled = false;
+      btn.textContent = 'Guardar venta';
+      mensaje.innerHTML = '<div class="mensaje-error" style="display:block;">' + error.message + '</div>';
+    };
+
+    if (document.getElementById('ventaFormaPago').value === 'consignacion') {
+      datos.transportadoraDistribuidor = opcion.transportadoraDistribuidor;
+      datos.departamento = esDistribuidor ? '' : cotizadorEstado.departamento;
+      google.script.run.withSuccessHandler(onSuccess).withFailureHandler(onFailure).crearVentaConsignacion(token, datos);
+    } else if (esDistribuidor) {
+      datos.distribuidor = opcion.transportadoraDistribuidor;
+      google.script.run.withSuccessHandler(onSuccess).withFailureHandler(onFailure).crearVentaDistribuidor(token, datos);
+    } else {
+      datos.transportadora = opcion.transportadoraDistribuidor;
+      datos.departamento = cotizadorEstado.departamento;
+      google.script.run.withSuccessHandler(onSuccess).withFailureHandler(onFailure).crearVentaTransportadora(token, datos);
+    }
+  }
+
+  // ==================================================
+  // ==================================================
+  // Módulo: Ventas (historial — revisión / control)
+  // Tres pestañas: Distribuidor, Transportadora, Consignación
+  // ==================================================
+  let ventasCompletas = [];
+  let pestañaVentasActiva = 'Resumen';
+
+  const URLS_RASTREO = {
+    'Servientrega': 'https://mobile.servientrega.com/WebSitePortal/RastreoEnvioDetalle.html?Guia=',
+    'TCC': 'https://t.17track.net/es#nums=',
+    'Interrapidísimo': 'https://siguetuenvio.interrapidisimo.com/principal',
+    'Coordinadora': 'https://coordinadora.com/rastreo/rastreo-de-guia/detalle-de-rastreo-de-guia/?guia='
+  };
+
+  function obtenerUrlRastreo_(entidad, guia) {
+    if (!guia || !entidad) return null;
+    const clave = Object.keys(URLS_RASTREO).find(function (k) {
+      return k.trim().toLowerCase() === String(entidad).trim().toLowerCase();
+    });
+    if (!clave) return null;
+    if (clave === 'TCC') return URLS_RASTREO[clave] + guia + '&fc=101181';
+    return URLS_RASTREO[clave] + guia;
+  }
+
+  function renderVentas() {
+    const panel = document.getElementById('panelPrincipal');
+    const sesion = obtenerSesion();
+    // Logística entra directo a Transportadora, que es lo que le compete
+    pestañaVentasActiva = sesion.rol === 'Logistica' ? 'Transportadora' : 'Resumen';
+
+    panel.innerHTML =
+      '<h2 class="modulo-titulo">Ventas</h2>' +
+      '<div id="mensajeVentasHist"></div>' +
+      '<div style="display:flex;gap:8px;margin-bottom:16px;align-items:center;flex-wrap:wrap;">' +
+      '  <button type="button" class="tab-venta btn-secundario" data-tab="Resumen">Resumen</button>' +
+      '  <button type="button" class="tab-venta btn-secundario" data-tab="Distribuidor">Distribuidor</button>' +
+      '  <button type="button" class="tab-venta btn-secundario" data-tab="Transportadora">Transportadora</button>' +
+      '  <button type="button" class="tab-venta btn-secundario" data-tab="Consignacion">Consignación</button>' +
+      '</div>' +
+      '<div class="form-usuario" style="grid-template-columns:1fr 1fr 1fr;">' +
+      '  <div class="campo" id="campoBuscarVentas">' +
+      '    <label for="filtroVentasTexto">Buscar (nombre, cédula, ciudad, remisión/guía)</label>' +
+      '    <input type="text" id="filtroVentasTexto" placeholder="Ej. Pérez o 71812">' +
+      '  </div>' +
+      '  <div class="campo">' +
+      '    <label for="filtroVentasQuincena">Quincena</label>' +
+      '    <select id="filtroVentasQuincena"><option value="">Todas</option></select>' +
+      '  </div>' +
+      '</div>' +
+      '<div id="contenidoPestañaVentas"></div>';
+
+    panel.querySelectorAll('.tab-venta').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        pestañaVentasActiva = btn.getAttribute('data-tab');
+        marcarPestañaActiva_();
+        actualizarVisibilidadBuscador_();
+        aplicarFiltrosVentas();
+      });
+    });
+    marcarPestañaActiva_();
+    actualizarVisibilidadBuscador_();
+
+    ['filtroVentasTexto', 'filtroVentasQuincena'].forEach(function (id) {
+      document.getElementById(id).addEventListener('input', aplicarFiltrosVentas);
+      document.getElementById(id).addEventListener('change', aplicarFiltrosVentas);
+    });
+
+    cargarVentasHistorial(sesion.token);
+    funcionRecargaActual = function () { cargarVentasHistorial(sesion.token); };
+  }
+
+  function marcarPestañaActiva_() {
+    document.querySelectorAll('.tab-venta').forEach(function (btn) {
+      const activa = btn.getAttribute('data-tab') === pestañaVentasActiva;
+      btn.style.background = activa ? 'var(--color-primario)' : 'transparent';
+      btn.style.color = activa ? '#fff' : 'inherit';
+    });
+  }
+
+  function actualizarVisibilidadBuscador_() {
+    const campo = document.getElementById('campoBuscarVentas');
+    if (campo) campo.style.display = pestañaVentasActiva === 'Resumen' ? 'none' : 'block';
+  }
+
+  function cargarVentasHistorial(token) {
+    google.script.run
+      .withSuccessHandler(function (resultado) {
+        const mensaje = document.getElementById('mensajeVentasHist');
+
+        if (!resultado || !resultado.ventas) {
+          if (mensaje) mensaje.innerHTML = '<div class="mensaje-error" style="display:block;">No se pudo cargar el historial (respuesta vacía del servidor).</div>';
+          ventasCompletas = [];
+          aplicarFiltrosVentas();
+          return;
+        }
+
+        ventasCompletas = resultado.ventas;
+
+        if (mensaje) {
+          mensaje.innerHTML = resultado.avisos && resultado.avisos.length
+            ? '<div class="mensaje-error" style="display:block;">Aviso: ' + resultado.avisos.join(' — ') + '</div>'
+            : '';
+        }
+
+        const selectQuincena = document.getElementById('filtroVentasQuincena');
+        if (selectQuincena) {
+          const quincenas = Array.from(new Set(ventasCompletas.map(function (v) { return v.quincena; }).filter(Boolean))).sort();
+          selectQuincena.innerHTML = '<option value="">Todas</option>' +
+            quincenas.map(function (q) { return '<option value="' + q + '">' + q + '</option>'; }).join('');
+        }
+
+        aplicarFiltrosVentas();
+      })
+      .withFailureHandler(function (error) {
+        const cont = document.getElementById('contenidoPestañaVentas');
+        if (cont) cont.innerHTML = '<p>Error al cargar el historial: ' + error.message + '</p>';
+        console.error(error);
+      })
+      .listarVentas(token);
+  }
+
+  function aplicarFiltrosVentas() {
+    const texto = (document.getElementById('filtroVentasTexto').value || '').trim().toLowerCase();
+    const quincena = document.getElementById('filtroVentasQuincena').value;
+    const esResumen = pestañaVentasActiva === 'Resumen';
+
+    const filtradas = (ventasCompletas || []).filter(function (v) {
+      if (!esResumen && v.tipo !== pestañaVentasActiva) return false;
+      if (quincena && v.quincena !== quincena) return false;
+      if (!esResumen && texto) {
+        const campo = ((v.nombreCliente || '') + ' ' + (v.cedula || '') + ' ' + (v.ciudad || '') + ' ' + (v.referencia || '')).toLowerCase();
+        if (campo.indexOf(texto) === -1) return false;
+      }
+      return true;
+    });
+
+    if (esResumen) pintarResumenGeneral(filtradas);
+    else if (pestañaVentasActiva === 'Transportadora') pintarTablaTransportadora(filtradas);
+    else if (pestañaVentasActiva === 'Distribuidor') pintarTablaDistribuidor(filtradas);
+    else pintarTablaConsignacion(filtradas);
+  }
+
+  // ---- Helper: agrupar ventas por quincena (usado en las 4 vistas) ----
+  function agruparPorQuincena_(filtradas) {
+    const grupos = {};
+    filtradas.forEach(function (v) {
+      const clave = v.quincena || 'Sin quincena asignada aún';
+      if (!grupos[clave]) grupos[clave] = [];
+      grupos[clave].push(v);
+    });
+    const claves = Object.keys(grupos).sort(function (a, b) {
+      if (a === 'Sin quincena asignada aún') return 1;
+      if (b === 'Sin quincena asignada aún') return -1;
+      return b.localeCompare(a);
+    });
+    return claves.map(function (k) { return { quincena: k, filas: grupos[k] }; });
+  }
+
+  function encabezadoQuincena_(quincena, filas) {
+    const total = filas.reduce(function (s, v) { return s + (Number(v.valorReal) || 0); }, 0);
+    return '<div style="display:flex;justify-content:space-between;align-items:center;margin:20px 0 8px;">' +
+      '<strong>' + quincena + '</strong>' +
+      '<span class="badge" style="background:var(--color-fondo);color:var(--color-primario-oscuro);">' + filas.length + ' venta(s) — ' + formatoMoneda(total) + '</span>' +
+      '</div>';
+  }
+
+  // ---- Pestaña Resumen: totales por quincena y por tipo ----
+  function pintarResumenGeneral(filtradas) {
+    const cont = document.getElementById('contenidoPestañaVentas');
+    if (!filtradas.length) {
+      cont.innerHTML = '<p>No hay ventas registradas todavía.</p>';
+      return;
+    }
+
+    const etiquetaTipo = { Distribuidor: 'Distribuidor', Transportadora: 'Transportadora', Consignacion: 'Consignación' };
+    const ordenTipo = ['Distribuidor', 'Transportadora', 'Consignacion'];
+    const grupos = agruparPorQuincena_(filtradas);
+
+    cont.innerHTML = grupos.map(function (g) {
+      const porTipo = {};
+      g.filas.forEach(function (v) {
+        if (!porTipo[v.tipo]) porTipo[v.tipo] = { cantidad: 0, total: 0, totalComision: 0 };
+        porTipo[v.tipo].cantidad += 1;
+        porTipo[v.tipo].total += Number(v.valorReal) || 0;
+        porTipo[v.tipo].totalComision += Number(v.vlrComision) || 0;
+      });
+
+      let totalGeneral = 0;
+      let cantidadGeneral = 0;
+      let comisionGeneral = 0;
+      const filasTabla = ordenTipo.map(function (t) {
+        const info = porTipo[t];
+        if (!info) return '';
+        totalGeneral += info.total;
+        cantidadGeneral += info.cantidad;
+        comisionGeneral += info.totalComision;
+        return '<tr><td>' + etiquetaTipo[t] + '</td><td>' + info.cantidad + '</td><td>' + formatoMoneda(info.total) + '</td><td>' + formatoMoneda(info.totalComision) + '</td></tr>';
+      }).join('');
+
+      return '<div style="margin-bottom:28px;">' +
+        '<h3 style="font-size:15px;color:var(--color-primario-oscuro);margin-bottom:10px;">' + g.quincena + '</h3>' +
+        '<table class="tabla-usuarios"><thead><tr><th>Tipo</th><th># Ventas</th><th>Total</th><th>Vlr Comisión</th></tr></thead><tbody>' +
+        filasTabla +
+        '<tr style="font-weight:600;background:var(--color-fondo);"><td>Total</td><td>' + cantidadGeneral + '</td><td>' + formatoMoneda(totalGeneral) + '</td><td>' + formatoMoneda(comisionGeneral) + '</td></tr>' +
+        '</tbody></table></div>';
+    }).join('');
+  }
+
+  // ---- Helper: fila de detalle expandible (usada en Distribuidor/Transportadora/Consignación) ----
+  function filaDetalleVenta_(v, idFila) {
+    return '<tr class="fila-detalle" id="detalle_' + idFila + '" style="display:none;"><td colspan="13">' +
+      '<div class="grid-detalle">' +
+      '<div><strong>Tipo:</strong> ' + v.tipo + '</div>' +
+      '<div><strong>Transportadora/Distribuidor:</strong> ' + (v.entidad || '') + '</div>' +
+      '<div><strong>Departamento:</strong> ' + (v.departamento || '') + '</div>' +
+      '<div><strong>Subido por:</strong> ' + (v.subidoPor || '') + '</div>' +
+      '<div><strong>Dirección:</strong> ' + (v.direccion || '') + '</div>' +
+      '<div><strong>Teléfono:</strong> ' + (v.telefono || '') + '</div>' +
+      '<div><strong>Correo:</strong> ' + (v.correoElectronico || '') + '</div>' +
+      '<div><strong>Kit:</strong> ' + (v.resumenKit || '') + '</div>' +
+      '<div><strong>Valor sugerido:</strong> ' + formatoMoneda(v.valorSugerido) + '</div>' +
+      '<div><strong>Observación:</strong> ' + (v.observacion || '') + '</div>' +
+      '<div><strong>Quincena:</strong> ' + (v.quincena || '') + '</div>' +
+      '<div><strong>Vlr Fac:</strong> ' + (v.vlrFac ? formatoMoneda(v.vlrFac) : '—') + '</div>' +
+      '</div></td></tr>';
+  }
+
+  function activarExpandibles_(cont) {
+    cont.querySelectorAll('.btn-expandir').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        const fila = document.getElementById('detalle_' + btn.getAttribute('data-fila'));
+        const abierta = fila.style.display !== 'none';
+        fila.style.display = abierta ? 'none' : 'table-row';
+        btn.textContent = abierta ? '+' : '−';
+      });
+    });
+  }
+
+
+  function estiloSemaforo_(estado) {
+    const colores = {
+      Creado: 'background:#eee;color:#222;',
+      'En ruta': 'background:#e3edf9;color:#1e4f7d;',
+      Novedad: 'background:#ffe8cc;color:#b35c00;',
+      Entregado: 'background:#eaf6e6;color:#2e7d32;',
+      'Caída': 'background:#fdecea;color:#c0392b;'
+    };
+    return colores[estado] || 'background:#eee;color:#222;';
+  }
+
+  function badgeSemaforo_(estado) {
+    if (!estado) return '<span class="badge badge-inactivo">Sin guía</span>';
+    return '<span class="badge" style="' + estiloSemaforo_(estado) + '">' + estado + '</span>';
+  }
+
+  // ---- Pestaña Transportadora ----
+  function pintarTablaTransportadora(filtradas) {
+    const cont = document.getElementById('contenidoPestañaVentas');
+    const sesion = obtenerSesion();
+    const puedeAsignarGuia = sesion.rol === 'Logistica' || sesion.rol === 'Administrador';
+
+    if (!filtradas.length) {
+      cont.innerHTML = '<p>No hay ventas de transportadora para este filtro.</p>';
+      return;
+    }
+
+    const grupos = agruparPorQuincena_(filtradas);
+
+    cont.innerHTML = grupos.map(function (g) {
+      const tablaHtml = '<table class="tabla-usuarios"><thead><tr>' +
+        '<th></th><th>Guía</th><th>Transportadora</th><th>Asesor</th><th>Fecha</th><th>Cédula</th><th>Nombre</th><th>Ciudad</th>' +
+        '<th>Celular</th><th>Total</th><th>FVE</th><th>Pagado a</th><th>Estado de guía</th><th>Rastreo</th></tr></thead><tbody>' +
+        g.filas.map(function (v, i) {
+          const fecha = v.fecha ? new Date(v.fecha).toLocaleDateString('es-CO') : '';
+          const esDueño = sesion.rol === 'Administrador' || sesion.usuario === v.asesor;
+          const urlRastreo = obtenerUrlRastreo_(v.entidad, v.referencia);
+          const idFila = 'transp_' + g.quincena.replace(/[^a-zA-Z0-9]/g, '') + '_' + i;
+
+          const celdaGuia = puedeAsignarGuia
+            ? '<input type="text" class="input-guia" data-id="' + v.idVenta + '" value="' + (v.referencia || '') + '" style="width:100px;"> ' +
+              '<button class="btn-link" data-id="' + v.idVenta + '" data-accion="guardar-guia">Guardar</button>'
+            : (v.referencia || '<em style="color:#999;">Sin asignar</em>');
+
+          const celdaSemaforo = (esDueño && v.referencia)
+            ? '<select class="input-semaforo" data-id="' + v.idVenta + '" style="' + estiloSemaforo_(v.semaforo || 'Creado') + '">' +
+                ESTADOS_SEMAFORO_UI.map(function (op) {
+                  return '<option value="' + op + '"' + (op === v.semaforo ? ' selected' : '') + '>' + op + '</option>';
+                }).join('') + '</select>'
+            : badgeSemaforo_(v.semaforo);
+
+          const celdaRastreo = urlRastreo
+            ? '<a href="' + urlRastreo + '" target="_blank" class="btn-link">Rastrear ↗</a>'
+            : '<span style="color:#999;">—</span>';
+
+          return '<tr>' +
+            '<td><button type="button" class="btn-expandir" data-fila="' + idFila + '">+</button></td>' +
+            '<td>' + celdaGuia + '</td><td>' + (v.entidad || '') + '</td><td>' + (v.asesor || '') + '</td><td>' + fecha + '</td>' +
+            '<td>' + (v.cedula || '') + '</td><td>' + (v.nombreCliente || '') + '</td><td>' + (v.ciudad || '') + '</td>' +
+            '<td>' + (v.celular || '') + '</td><td>' + formatoMoneda(v.valorReal) + '</td>' +
+            '<td>' + (v.fve || '') + '</td><td>' + (v.pagadoA || '') + '</td>' +
+            '<td>' + celdaSemaforo + '</td><td>' + celdaRastreo + '</td>' +
+            '</tr>' + filaDetalleVenta_(v, idFila);
+        }).join('') + '</tbody></table>';
+      return encabezadoQuincena_(g.quincena, g.filas) + tablaHtml;
+    }).join('');
+
+    activarExpandibles_(cont);
+
+    if (puedeAsignarGuia) {
+      cont.querySelectorAll('button[data-accion="guardar-guia"]').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          const id = btn.getAttribute('data-id');
+          const input = cont.querySelector('.input-guia[data-id="' + id + '"]');
+          const sesion = obtenerSesion();
+          google.script.run
+            .withSuccessHandler(function () { cargarVentasHistorial(sesion.token); })
+            .withFailureHandler(function (err) { alert('Error: ' + err.message); })
+            .asignarNumeroGuia(sesion.token, id, input.value);
+        });
+      });
+    }
+
+    cont.querySelectorAll('.input-semaforo').forEach(function (select) {
+      select.addEventListener('change', function () {
+        const id = select.getAttribute('data-id');
+        const sesion = obtenerSesion();
+        select.style.cssText = estiloSemaforo_(select.value);
+        google.script.run
+          .withSuccessHandler(function () { cargarVentasHistorial(sesion.token); })
+          .withFailureHandler(function (err) { alert('Error: ' + err.message); })
+          .actualizarSemaforo(sesion.token, id, select.value);
+      });
+    });
+  }
+
+  // ---- Pestaña Distribuidor ----
+  function pintarTablaDistribuidor(filtradas) {
+    const cont = document.getElementById('contenidoPestañaVentas');
+    const sesion = obtenerSesion();
+    const esAdmin = sesion.rol === 'Administrador';
+
+    if (!filtradas.length) {
+      cont.innerHTML = '<p>No hay ventas de distribuidor para este filtro.</p>';
+      return;
+    }
+
+    const grupos = agruparPorQuincena_(filtradas);
+
+    cont.innerHTML = grupos.map(function (g) {
+      const tablaHtml = '<table class="tabla-usuarios"><thead><tr>' +
+        '<th></th><th>Remisión</th><th>Asesor</th><th>Fecha</th><th>Cédula</th><th>Nombre</th><th>Ciudad</th>' +
+        '<th>Celular</th><th>Total</th><th>FVE</th><th>Pagado a</th><th>Estado entrega</th><th>Observación</th></tr></thead><tbody>' +
+        g.filas.map(function (v, i) {
+          const fecha = v.fecha ? new Date(v.fecha).toLocaleDateString('es-CO') : '';
+          const idFila = 'distrib_' + g.quincena.replace(/[^a-zA-Z0-9]/g, '') + '_' + i;
+
+          const celdaRemision = esAdmin
+            ? '<input type="text" class="input-remision" data-id="' + v.idVenta + '" value="' + (v.referencia || '') + '" style="width:80px;"> ' +
+              '<button class="btn-link" data-id="' + v.idVenta + '" data-accion="guardar-remision">Guardar</button>'
+            : (v.referencia || '<em style="color:#999;">Sin asignar</em>');
+
+          return '<tr>' +
+            '<td><button type="button" class="btn-expandir" data-fila="' + idFila + '">+</button></td>' +
+            '<td>' + celdaRemision + '</td><td>' + (v.asesor || '') + '</td><td>' + fecha + '</td>' +
+            '<td>' + (v.cedula || '') + '</td><td>' + (v.nombreCliente || '') + '</td><td>' + (v.ciudad || '') + '</td>' +
+            '<td>' + (v.celular || '') + '</td><td>' + formatoMoneda(v.valorReal) + '</td>' +
+            '<td>' + (v.fve || '') + '</td><td>' + (v.pagadoA || '') + '</td>' +
+            '<td>' + (v.estadoEntrega || '—') + '</td><td>' + (v.observacionEntrega || '') + '</td>' +
+            '</tr>' + filaDetalleVenta_(v, idFila);
+        }).join('') + '</tbody></table>';
+      return encabezadoQuincena_(g.quincena, g.filas) + tablaHtml;
+    }).join('') +
+      (esAdmin ? '' : '<p style="color:#889;font-size:12px;margin-top:8px;">Estado y observación de entrega se traen automáticamente del reporte de distribuidores.</p>');
+
+    activarExpandibles_(cont);
+
+    if (esAdmin) {
+      cont.querySelectorAll('button[data-accion="guardar-remision"]').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          const id = btn.getAttribute('data-id');
+          const input = cont.querySelector('.input-remision[data-id="' + id + '"]');
+          const sesion = obtenerSesion();
+          google.script.run
+            .withSuccessHandler(function () { cargarVentasHistorial(sesion.token); })
+            .withFailureHandler(function (err) { alert('Error: ' + err.message); })
+            .asignarRemision(sesion.token, id, input.value);
+        });
+      });
+    }
+  }
+
+  // ---- Pestaña Consignación ----
+  function pintarTablaConsignacion(filtradas) {
+    const cont = document.getElementById('contenidoPestañaVentas');
+    const sesion = obtenerSesion();
+    const puedeAprobar = sesion.rol === 'Administrador' || sesion.rol === 'Coordinador';
+    const puedeAsignar = sesion.rol === 'Administrador' || sesion.rol === 'Logistica';
+
+    if (!filtradas.length) {
+      cont.innerHTML = '<p>No hay consignaciones para este filtro.</p>';
+      return;
+    }
+
+    const grupos = agruparPorQuincena_(filtradas);
+
+    cont.innerHTML = grupos.map(function (g) {
+      const tablaHtml = '<table class="tabla-usuarios"><thead><tr>' +
+        '<th></th><th>Guía/Remisión</th><th>Asesor</th><th>Fecha</th><th>Cédula</th><th>Nombre</th><th>Ciudad</th>' +
+        '<th>Celular</th><th>Total</th><th>FVE</th><th>Pagado a</th><th>Aprobación</th><th>Estado de guía</th><th>Rastreo</th></tr></thead><tbody>' +
+        g.filas.map(function (v, i) {
+          const fecha = v.fecha ? new Date(v.fecha).toLocaleDateString('es-CO') : '';
+          const esDistribuidor = v.entidad === 'Distribuidor';
+          const esDueño = sesion.rol === 'Administrador' || sesion.usuario === v.asesor;
+          const idFila = 'consig_' + g.quincena.replace(/[^a-zA-Z0-9]/g, '') + '_' + i;
+          const urlRastreo = obtenerUrlRastreo_(v.entidad, v.referencia);
+
+          let celdaAprobacion;
+          if (v.estadoAprobacion === 'Pendiente' && puedeAprobar) {
+            celdaAprobacion =
+              '<span class="badge badge-inactivo">Pendiente</span> ' +
+              '<button class="btn-link" data-id="' + v.idVenta + '" data-accion="aprobar">Aprobar</button> ' +
+              '<button class="btn-link" data-id="' + v.idVenta + '" data-accion="rechazar">Rechazar</button>';
+          } else if (v.estadoAprobacion === 'Aprobada') {
+            celdaAprobacion = '<span class="badge badge-activo">Aprobada</span>';
+          } else if (v.estadoAprobacion === 'Rechazada') {
+            celdaAprobacion = '<span class="badge badge-inactivo">Rechazada</span>';
+          } else {
+            celdaAprobacion = '<span class="badge badge-inactivo">Pendiente</span>';
+          }
+
+          let celdaGuia = '—';
+          if (v.estadoAprobacion === 'Aprobada') {
+            const puedeAsignarEsta = esDistribuidor ? sesion.rol === 'Administrador' : puedeAsignar;
+            celdaGuia = puedeAsignarEsta
+              ? '<input type="text" class="input-guia-consig" data-id="' + v.idVenta + '" value="' + (v.referencia || '') + '" style="width:90px;"> ' +
+                '<button class="btn-link" data-id="' + v.idVenta + '" data-accion="guardar-guia-consig">Guardar</button>'
+              : (v.referencia || '<em style="color:#999;">Sin asignar</em>');
+          }
+
+          let celdaSemaforo = '—';
+          if (v.estadoAprobacion === 'Aprobada' && !esDistribuidor) {
+            celdaSemaforo = (esDueño && v.referencia)
+              ? '<select class="input-semaforo-consig" data-id="' + v.idVenta + '" style="' + estiloSemaforo_(v.semaforo || 'Creado') + '">' +
+                  ESTADOS_SEMAFORO_UI.map(function (op) {
+                    return '<option value="' + op + '"' + (op === v.semaforo ? ' selected' : '') + '>' + op + '</option>';
+                  }).join('') + '</select>'
+              : badgeSemaforo_(v.semaforo);
+          }
+
+          const celdaRastreo = (urlRastreo && !esDistribuidor)
+            ? '<a href="' + urlRastreo + '" target="_blank" class="btn-link">Rastrear ↗</a>'
+            : '<span style="color:#999;">—</span>';
+
+          return '<tr>' +
+            '<td><button type="button" class="btn-expandir" data-fila="' + idFila + '">+</button></td>' +
+            '<td>' + celdaGuia + '</td><td>' + (v.asesor || '') + '</td><td>' + fecha + '</td>' +
+            '<td>' + (v.cedula || '') + '</td><td>' + (v.nombreCliente || '') + '</td><td>' + (v.ciudad || '') + '</td>' +
+            '<td>' + (v.celular || '') + '</td><td>' + formatoMoneda(v.valorReal) + '</td>' +
+            '<td>' + (v.fve || '') + '</td><td>' + (v.pagadoA || '') + '</td>' +
+            '<td>' + celdaAprobacion + '</td><td>' + celdaSemaforo + '</td><td>' + celdaRastreo + '</td>' +
+            '</tr>' + filaDetalleVenta_(v, idFila);
+        }).join('') + '</tbody></table>';
+      return encabezadoQuincena_(g.quincena, g.filas) + tablaHtml;
+    }).join('');
+
+    activarExpandibles_(cont);
+
+    if (puedeAprobar) {
+      cont.querySelectorAll('button[data-accion="aprobar"], button[data-accion="rechazar"]').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          const id = btn.getAttribute('data-id');
+          const nuevoEstado = btn.getAttribute('data-accion') === 'aprobar' ? 'Aprobada' : 'Rechazada';
+          const sesion = obtenerSesion();
+          google.script.run
+            .withSuccessHandler(function () { cargarVentasHistorial(sesion.token); })
+            .withFailureHandler(function (err) { alert('Error: ' + err.message); })
+            .aprobarConsignacion(sesion.token, id, nuevoEstado);
+        });
+      });
+    }
+
+    cont.querySelectorAll('button[data-accion="guardar-guia-consig"]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        const id = btn.getAttribute('data-id');
+        const input = cont.querySelector('.input-guia-consig[data-id="' + id + '"]');
+        const sesion = obtenerSesion();
+        google.script.run
+          .withSuccessHandler(function () { cargarVentasHistorial(sesion.token); })
+          .withFailureHandler(function (err) { alert('Error: ' + err.message); })
+          .asignarGuiaRemisionConsignacion(sesion.token, id, input.value);
+      });
+    });
+
+    cont.querySelectorAll('.input-semaforo-consig').forEach(function (select) {
+      select.addEventListener('change', function () {
+        const id = select.getAttribute('data-id');
+        const sesion = obtenerSesion();
+        select.style.cssText = estiloSemaforo_(select.value);
+        google.script.run
+          .withSuccessHandler(function () { cargarVentasHistorial(sesion.token); })
+          .withFailureHandler(function (err) { alert('Error: ' + err.message); })
+          .actualizarSemaforoConsignacion(sesion.token, id, select.value);
+      });
+    });
+  }
+
+  const ESTADOS_SEMAFORO_UI = ['Creado', 'En ruta', 'Novedad', 'Entregado', 'Caída'];
+
+  // ==================================================
+  // Módulo: Anuncios (gestión — solo Administrador)
+  // ==================================================
+  function renderAnuncios() {
+    const panel = document.getElementById('panelPrincipal');
+    const sesion = obtenerSesion();
+
+    panel.innerHTML =
+      '<h2 class="modulo-titulo">Anuncios</h2>' +
+      '<div id="mensajeAnuncios"></div>' +
+      '<form id="formAnuncio" class="form-usuario" style="grid-template-columns:1fr;">' +
+      '  <div class="campo campo-full">' +
+      '    <label for="nuevoMensajeAnuncio">Mensaje</label>' +
+      '    <input type="text" id="nuevoMensajeAnuncio" placeholder="Ej. Ya subí los pagos de la 1Q Julio" required>' +
+      '  </div>' +
+      '  <button type="submit" class="btn-primario" id="btnPublicarAnuncio">Publicar</button>' +
+      '</form>' +
+      '<table class="tabla-usuarios">' +
+      '  <thead><tr><th>Mensaje</th><th>Fecha</th><th>Estado</th><th></th></tr></thead>' +
+      '  <tbody id="filasAnuncios"><tr><td colspan="4">Cargando...</td></tr></tbody>' +
+      '</table>';
+
+    document.getElementById('formAnuncio').addEventListener('submit', function (e) {
+      e.preventDefault();
+      publicarAnuncio(sesion.token);
+    });
+
+    cargarListaAnuncios(sesion.token);
+    funcionRecargaActual = function () { cargarListaAnuncios(sesion.token); };
+  }
+
+  function cargarListaAnuncios(token) {
+    google.script.run
+      .withSuccessHandler(function (anuncios) {
+        const tbody = document.getElementById('filasAnuncios');
+        if (!tbody) return;
+
+        if (!anuncios.length) {
+          tbody.innerHTML = '<tr><td colspan="4">No hay anuncios todavía.</td></tr>';
+          return;
+        }
+
+        tbody.innerHTML = anuncios.map(function (a) {
+          const fecha = a.fecha ? new Date(a.fecha).toLocaleString('es-CO') : '';
+          const badge = a.activo ? '<span class="badge badge-activo">Activo</span>' : '<span class="badge badge-inactivo">Inactivo</span>';
+          const accion = a.activo
+            ? '<button class="btn-link" data-id="' + a.idAnuncio + '">Desactivar</button>'
+            : '';
+          return '<tr><td>' + a.mensaje + '</td><td>' + fecha + '</td><td>' + badge + '</td><td>' + accion + '</td></tr>';
+        }).join('');
+
+        tbody.querySelectorAll('button[data-id]').forEach(function (btn) {
+          btn.addEventListener('click', function () {
+            const id = btn.getAttribute('data-id');
+            const sesion = obtenerSesion();
+            google.script.run
+              .withSuccessHandler(function () { cargarListaAnuncios(sesion.token); })
+              .withFailureHandler(function (err) { alert('Error: ' + err.message); })
+              .desactivarAnuncio(sesion.token, id);
+          });
+        });
+      })
+      .withFailureHandler(function (e) { console.error(e); })
+      .listarAnunciosTodos(token);
+  }
+
+  function publicarAnuncio(token) {
+    const btn = document.getElementById('btnPublicarAnuncio');
+    const mensaje = document.getElementById('mensajeAnuncios');
+    mensaje.innerHTML = '';
+    const texto = document.getElementById('nuevoMensajeAnuncio').value.trim();
+
+    btn.disabled = true;
+    btn.textContent = 'Publicando...';
+
+    google.script.run
+      .withSuccessHandler(function () {
+        btn.disabled = false;
+        btn.textContent = 'Publicar';
+        mensaje.innerHTML = '<div class="mensaje-exito">Anuncio publicado.</div>';
+        document.getElementById('formAnuncio').reset();
+        cargarListaAnuncios(token);
+      })
+      .withFailureHandler(function (error) {
+        btn.disabled = false;
+        btn.textContent = 'Publicar';
+        mensaje.innerHTML = '<div class="mensaje-error" style="display:block;">' + error.message + '</div>';
+      })
+      .crearAnuncio(token, texto);
+  }
+
+  // ==================================================
+  // Módulo: Recepción
+  // Formulario abierto para todos; visible después solo para el asesor
+  // asignado (o Coordinador/Administrador, que ven todo y reasignan).
+  // ==================================================
+  let asesoresRecepcionCache = null;
+
+  function renderRecepcion() {
+    const panel = document.getElementById('panelPrincipal');
+    const sesion = obtenerSesion();
+    const puedeReasignar = sesion.rol === 'Administrador' || sesion.rol === 'Coordinador';
+
+    panel.innerHTML =
+      '<h2 class="modulo-titulo">Recepción</h2>' +
+      '<div id="mensajeRecepcion"></div>' +
+      '<form id="formRecepcion" class="form-usuario">' +
+      '  <div class="campo">' +
+      '    <label>Fecha</label>' +
+      '    <input type="text" value="' + new Date().toLocaleString('es-CO') + '" disabled>' +
+      '  </div>' +
+      '  <div class="campo">' +
+      '    <label for="recCelular">Celular</label>' +
+      '    <input type="text" id="recCelular" required>' +
+      '  </div>' +
+      '  <div class="campo">' +
+      '    <label for="recNombreCliente">Nombre del cliente</label>' +
+      '    <input type="text" id="recNombreCliente">' +
+      '  </div>' +
+      '  <div class="campo">' +
+      '    <label for="recCliente">¿Cliente?</label>' +
+      '    <select id="recCliente"><option value="">Selecciona</option><option value="Sí">Sí</option><option value="No">No</option></select>' +
+      '  </div>' +
+      '  <div class="campo">' +
+      '    <label for="recCiudad">Ciudad</label>' +
+      '    <input type="text" id="recCiudad">' +
+      '  </div>' +
+      '  <div class="campo">' +
+      '    <label for="recRecepcionadoPor">Recepcionado por</label>' +
+      '    <input type="text" id="recRecepcionadoPor" value="' + sesion.usuario + '">' +
+      '  </div>' +
+      '  <div class="campo">' +
+      '    <label for="recClienteDe">Cliente de</label>' +
+      '    <input type="text" id="recClienteDe" placeholder="Ej. si ya lo referenció alguien">' +
+      '  </div>' +
+      '  <div class="campo">' +
+      '    <label for="recAsesor">Asesor</label>' +
+      '    <select id="recAsesor"><option value="">Sin asignar todavía</option></select>' +
+      '  </div>' +
+      '  <button type="submit" class="btn-primario" id="btnGuardarRecepcion">Guardar</button>' +
+      '</form>' +
+      '<h3 style="margin-top:28px;font-size:15px;">Registros' + (puedeReasignar ? '' : ' asignados a mí') + '</h3>' +
+      '<table class="tabla-usuarios">' +
+      '  <thead><tr><th>Fecha</th><th>Celular</th><th>Cliente</th><th>¿Cliente?</th><th>Ciudad</th><th>Recepcionado por</th><th>Cliente de</th><th>Asesor</th></tr></thead>' +
+      '  <tbody id="filasRecepcion"><tr><td colspan="8">Cargando...</td></tr></tbody>' +
+      '</table>';
+
+    cargarAsesoresParaFormulario_();
+
+    document.getElementById('formRecepcion').addEventListener('submit', function (e) {
+      e.preventDefault();
+      guardarRegistroRecepcion(sesion.token);
+    });
+
+    cargarListaRecepcion(sesion.token, puedeReasignar);
+    funcionRecargaActual = function () { cargarListaRecepcion(sesion.token, puedeReasignar); };
+  }
+
+  function cargarAsesoresParaFormulario_() {
+    const sesion = obtenerSesion();
+
+    google.script.run
+      .withSuccessHandler(function (asesores) {
+        asesoresRecepcionCache = asesores;
+        const select = document.getElementById('recAsesor');
+        if (!select) return;
+        select.innerHTML = '<option value="">Sin asignar todavía</option>' +
+          asesores.map(function (a) { return '<option value="' + a.usuario + '">' + a.nombre + ' (' + a.usuario + ')</option>'; }).join('');
+      })
+      .withFailureHandler(function (e) { console.error(e); })
+      .listarAsesoresActivos(sesion.token);
+  }
+
+  function guardarRegistroRecepcion(token) {
+    const btn = document.getElementById('btnGuardarRecepcion');
+    const mensaje = document.getElementById('mensajeRecepcion');
+    mensaje.innerHTML = '';
+
+    const datos = {
+      celular: document.getElementById('recCelular').value.trim(),
+      nombreCliente: document.getElementById('recNombreCliente').value.trim(),
+      cliente: document.getElementById('recCliente').value,
+      ciudad: document.getElementById('recCiudad').value.trim(),
+      recepcionadoPor: document.getElementById('recRecepcionadoPor').value.trim(),
+      clienteDe: document.getElementById('recClienteDe').value.trim(),
+      asesor: document.getElementById('recAsesor').value
+    };
+
+    btn.disabled = true;
+    btn.textContent = 'Guardando...';
+
+    google.script.run
+      .withSuccessHandler(function () {
+        btn.disabled = false;
+        btn.textContent = 'Guardar';
+        mensaje.innerHTML = '<div class="mensaje-exito">Registro guardado correctamente.</div>';
+        const sesionActual = obtenerSesion();
+        document.getElementById('formRecepcion').reset();
+        document.getElementById('recRecepcionadoPor').value = sesionActual.usuario;
+        cargarListaRecepcion(token, sesionActual.rol === 'Administrador' || sesionActual.rol === 'Coordinador');
+      })
+      .withFailureHandler(function (error) {
+        btn.disabled = false;
+        btn.textContent = 'Guardar';
+        mensaje.innerHTML = '<div class="mensaje-error" style="display:block;">' + error.message + '</div>';
+      })
+      .crearRegistroRecepcion(token, datos);
+  }
+
+  function cargarListaRecepcion(token, puedeReasignar) {
+    google.script.run
+      .withSuccessHandler(function (registros) {
+        const tbody = document.getElementById('filasRecepcion');
+        if (!tbody) return;
+
+        if (!registros.length) {
+          tbody.innerHTML = '<tr><td colspan="8">No hay registros todavía.</td></tr>';
+          return;
+        }
+
+        tbody.innerHTML = registros.map(function (r) {
+          const fecha = r.fecha ? new Date(r.fecha).toLocaleString('es-CO') : '';
+
+          let celdaAsesor = r.asesor || '<em style="color:#999;">Sin asignar</em>';
+          if (puedeReasignar) {
+            const opciones = (asesoresRecepcionCache || []).map(function (a) {
+              return '<option value="' + a.usuario + '"' + (a.usuario === r.asesor ? ' selected' : '') + '>' + a.nombre + ' (' + a.usuario + ')</option>';
+            }).join('');
+            celdaAsesor = '<select class="input-asesor-recepcion" data-id="' + r.idRegistro + '">' +
+              '<option value="">Sin asignar</option>' + opciones + '</select> ' +
+              '<button class="btn-link" data-id="' + r.idRegistro + '" data-accion="reasignar">Guardar</button>';
+          }
+
+          return '<tr>' +
+            '<td>' + fecha + '</td><td>' + (r.celular || '') + '</td><td>' + (r.nombreCliente || '') + '</td><td>' + (r.cliente || '') + '</td>' +
+            '<td>' + (r.ciudad || '') + '</td><td>' + (r.recepcionadoPor || '') + '</td><td>' + (r.clienteDe || '') + '</td>' +
+            '<td>' + celdaAsesor + '</td>' +
+            '</tr>';
+        }).join('');
+
+        if (puedeReasignar) {
+          tbody.querySelectorAll('button[data-accion="reasignar"]').forEach(function (btn) {
+            btn.addEventListener('click', function () {
+              const id = btn.getAttribute('data-id');
+              const select = tbody.querySelector('.input-asesor-recepcion[data-id="' + id + '"]');
+              const sesion = obtenerSesion();
+              google.script.run
+                .withSuccessHandler(function () { cargarListaRecepcion(sesion.token, true); })
+                .withFailureHandler(function (err) { alert('Error: ' + err.message); })
+                .reasignarAsesorRecepcion(sesion.token, id, select.value);
+            });
+          });
+        }
+      })
+      .withFailureHandler(function (e) {
+        const tbody = document.getElementById('filasRecepcion');
+        if (tbody) tbody.innerHTML = '<tr><td colspan="8">Error al cargar Recepción.</td></tr>';
+        console.error(e);
+      })
+      .listarRecepcion(token);
+  }
+
+  // ==================================================
+  // Módulo: Minutos (formulario diario + bolsa PBX)
+  // ==================================================
+  function renderMinutos() {
+    const panel = document.getElementById('panelPrincipal');
+    const sesion = obtenerSesion();
+    const puedeGestionarBolsa = sesion.rol === 'Administrador' || sesion.rol === 'Coordinador';
+
+    panel.innerHTML =
+      '<h2 class="modulo-titulo">Minutos</h2>' +
+      '<div id="mensajeMinutos"></div>' +
+      '<form id="formMinutos" class="form-usuario">' +
+      '  <div class="campo">' +
+      '    <label>Fecha</label>' +
+      '    <input type="text" value="' + new Date().toLocaleString('es-CO') + '" disabled>' +
+      '  </div>' +
+      '  <div class="campo">' +
+      '    <label for="minAsesor">Asesor</label>' +
+      '    <input type="text" id="minAsesor" value="' + sesion.usuario + '">' +
+      '  </div>' +
+      '  <div class="campo">' +
+      '    <label for="minPbx">Minutos PBX</label>' +
+      '    <input type="number" id="minPbx" min="0">' +
+      '  </div>' +
+      '  <div class="campo">' +
+      '    <label for="minCelular">Minutos celular</label>' +
+      '    <input type="number" id="minCelular" min="0">' +
+      '  </div>' +
+      '  <button type="submit" class="btn-primario" id="btnGuardarMinutos">Guardar</button>' +
+      '</form>' +
+      '<div id="bolsaMinutosPanel" style="margin-top:24px;"></div>' +
+      '<h3 style="margin-top:28px;font-size:15px;">Historial' + (puedeGestionarBolsa ? '' : ' (mío)') + '</h3>' +
+      '<table class="tabla-usuarios">' +
+      '  <thead><tr><th>Fecha</th><th>Asesor</th><th>Minutos PBX</th><th>Minutos celular</th></tr></thead>' +
+      '  <tbody id="filasMinutos"><tr><td colspan="4">Cargando...</td></tr></tbody>' +
+      '</table>';
+
+    document.getElementById('formMinutos').addEventListener('submit', function (e) {
+      e.preventDefault();
+      guardarRegistroMinutos(sesion.token);
+    });
+
+    cargarBolsaMinutos(sesion.token, puedeGestionarBolsa);
+    cargarListaMinutos(sesion.token);
+    funcionRecargaActual = function () {
+      cargarBolsaMinutos(sesion.token, puedeGestionarBolsa);
+      cargarListaMinutos(sesion.token);
+    };
+  }
+
+  function guardarRegistroMinutos(token) {
+    const btn = document.getElementById('btnGuardarMinutos');
+    const mensaje = document.getElementById('mensajeMinutos');
+    mensaje.innerHTML = '';
+
+    const datos = {
+      asesor: document.getElementById('minAsesor').value.trim(),
+      minutosPbx: document.getElementById('minPbx').value,
+      minutosCelular: document.getElementById('minCelular').value
+    };
+
+    btn.disabled = true;
+    btn.textContent = 'Guardando...';
+
+    google.script.run
+      .withSuccessHandler(function () {
+        btn.disabled = false;
+        btn.textContent = 'Guardar';
+        mensaje.innerHTML = '<div class="mensaje-exito">Registro guardado correctamente.</div>';
+        document.getElementById('minPbx').value = '';
+        document.getElementById('minCelular').value = '';
+        cargarBolsaMinutos(token, document.getElementById('formConfigBolsa') !== null);
+        cargarListaMinutos(token);
+      })
+      .withFailureHandler(function (error) {
+        btn.disabled = false;
+        btn.textContent = 'Guardar';
+        mensaje.innerHTML = '<div class="mensaje-error" style="display:block;">' + error.message + '</div>';
+      })
+      .crearRegistroMinutos(token, datos);
+  }
+
+  function cargarBolsaMinutos(token, puedeGestionarBolsa) {
+    google.script.run
+      .withSuccessHandler(function (estado) {
+        const cont = document.getElementById('bolsaMinutosPanel');
+        if (!cont) return;
+
+        const porcentaje = estado.bolsaTotal > 0 ? Math.max(0, Math.min(100, (estado.restante / estado.bolsaTotal) * 100)) : 0;
+        const colorBarra = porcentaje > 30 ? '#2e7d32' : (porcentaje > 10 ? '#b35c00' : '#c0392b');
+        const fechaInicio = estado.fechaInicioCiclo ? new Date(estado.fechaInicioCiclo).toLocaleDateString('es-CO') : 'Sin definir';
+
+        let html =
+          '<div style="background:var(--color-fondo);border:1px solid var(--color-borde);border-radius:var(--radio);padding:16px;">' +
+          '  <h3 style="margin:0 0 10px;font-size:15px;">Bolsa de minutos PBX</h3>' +
+          '  <div style="display:flex;gap:24px;flex-wrap:wrap;margin-bottom:10px;">' +
+          '    <div><strong>Total:</strong> ' + estado.bolsaTotal.toLocaleString('es-CO') + ' min</div>' +
+          '    <div><strong>Consumido:</strong> ' + estado.consumido.toLocaleString('es-CO') + ' min</div>' +
+          '    <div><strong>Restante:</strong> ' + estado.restante.toLocaleString('es-CO') + ' min</div>' +
+          '    <div><strong>Ciclo desde:</strong> ' + fechaInicio + '</div>' +
+          '  </div>' +
+          '  <div style="background:#e0e0e0;border-radius:6px;height:10px;overflow:hidden;">' +
+          '    <div style="width:' + porcentaje + '%;background:' + colorBarra + ';height:100%;"></div>' +
+          '  </div>';
+
+        if (puedeGestionarBolsa) {
+          html +=
+            '  <form id="formConfigBolsa" class="form-usuario" style="margin-top:16px;grid-template-columns:1fr 1fr auto;">' +
+            '    <div class="campo">' +
+            '      <label for="configBolsaTotal">Bolsa total (minutos)</label>' +
+            '      <input type="number" id="configBolsaTotal" min="0" value="' + estado.bolsaTotal + '">' +
+            '    </div>' +
+            '    <div class="campo">' +
+            '      <label for="configFechaInicio">Fecha de inicio del ciclo</label>' +
+            '      <input type="date" id="configFechaInicio" value="' + (estado.fechaInicioCiclo ? estado.fechaInicioCiclo.substring(0, 10) : '') + '">' +
+            '    </div>' +
+            '    <button type="submit" class="btn-primario" style="align-self:end;">Guardar / Reiniciar</button>' +
+            '  </form>';
+        }
+
+        html += '</div>';
+        cont.innerHTML = html;
+
+        if (puedeGestionarBolsa) {
+          document.getElementById('formConfigBolsa').addEventListener('submit', function (e) {
+            e.preventDefault();
+            guardarConfigBolsa(token, puedeGestionarBolsa);
+          });
+        }
+      })
+      .withFailureHandler(function (e) { console.error(e); })
+      .obtenerEstadoBolsaMinutos(token);
+  }
+
+  function guardarConfigBolsa(token, puedeGestionarBolsa) {
+    const bolsaTotal = document.getElementById('configBolsaTotal').value;
+    const fechaInicio = document.getElementById('configFechaInicio').value;
+    const mensaje = document.getElementById('mensajeMinutos');
+
+    google.script.run
+      .withSuccessHandler(function () {
+        mensaje.innerHTML = '<div class="mensaje-exito">Bolsa actualizada.</div>';
+        cargarBolsaMinutos(token, puedeGestionarBolsa);
+      })
+      .withFailureHandler(function (error) {
+        mensaje.innerHTML = '<div class="mensaje-error" style="display:block;">' + error.message + '</div>';
+      })
+      .actualizarConfigBolsaMinutos(token, bolsaTotal, fechaInicio);
+  }
+
+  function cargarListaMinutos(token) {
+    google.script.run
+      .withSuccessHandler(function (registros) {
+        const tbody = document.getElementById('filasMinutos');
+        if (!tbody) return;
+
+        if (!registros.length) {
+          tbody.innerHTML = '<tr><td colspan="4">No hay registros todavía.</td></tr>';
+          return;
+        }
+
+        tbody.innerHTML = registros.map(function (r) {
+          const fecha = r.fecha ? new Date(r.fecha).toLocaleString('es-CO') : '';
+          return '<tr>' +
+            '<td>' + fecha + '</td><td>' + (r.asesor || '') + '</td>' +
+            '<td>' + (r.minutosPbx !== '' && r.minutosPbx !== undefined ? r.minutosPbx : '—') + '</td>' +
+            '<td>' + (r.minutosCelular !== '' && r.minutosCelular !== undefined ? r.minutosCelular : '—') + '</td>' +
+            '</tr>';
+        }).join('');
+      })
+      .withFailureHandler(function (e) {
+        const tbody = document.getElementById('filasMinutos');
+        if (tbody) tbody.innerHTML = '<tr><td colspan="4">Error al cargar Minutos.</td></tr>';
+        console.error(e);
+      })
+      .listarMinutos(token);
   }
 
   // ---- Al cargar la página: si ya hay sesión activa, saltar el login ----
